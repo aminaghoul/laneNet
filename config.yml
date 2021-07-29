@@ -6,5 +6,6 @@ ns_args:
   split: "mini_train"
   map_name: 'singapore-hollandvillage'
   history_duration: 6
+  prediction_duration: 6
   lane_amount_of_coordinates: 150
 

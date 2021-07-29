@@ -59,6 +59,7 @@ class NS(Dataset):
         # Parameter useful for later
         self._history_duration = self._config['history_duration']
         self._lane_coordinates = self._config['lane_amount_of_coordinates']
+        self._prediction_duration = self._config['prediction_duration']
 
         self._token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
         self._history, self._future, self._lanes, self._neighbors = self._load()
@@ -68,6 +69,7 @@ class NS(Dataset):
 
     def _load(self):
         h_d = self._history_duration
+        p_d = self._prediction_duration
         # singapore-onenorth
         # singapore-hollandvillage
         # singapore-queenstown
@@ -81,8 +83,8 @@ class NS(Dataset):
 
         # Choice of the agent: take the one with the most available samples
         try:
-            agents = open('/dev/shm/cached_%s_%s_agents.bin' % (
-                self._config['map_name'], self._config['split']
+            agents = open('/dev/shm/cached_%s_%s_%d_%d_agents.bin' % (
+                self._config['map_name'], self._config['split'], h_d, p_d
             ), 'r').read().strip().split(',')
         except FileNotFoundError:
             availability = defaultdict(int)
@@ -91,10 +93,12 @@ class NS(Dataset):
                     continue
                 if nusc_map.get_closest_lane(*attributes['translation'][:2], 5):
                     availability[attributes['instance_token']] += 1
-            agents = list(filter((lambda x: availability.get(x, -1) > (h_d + 6)), instances))
-            open('/dev/shm/cached_%s_%s_agents.bin' % (
-                self._config['map_name'], self._config['split']
+            agents = list(filter((lambda x: availability.get(x, -1) > (h_d + p_d)), instances))
+            open('/dev/shm/cached_%s_%s_%d_%d_agents.bin' % (
+                self._config['map_name'], self._config['split'], h_d, p_d
             ), 'w').write(','.join(agents))
+
+        print('Found %d candidates' % len(agents))
 
         for agent in agents:
             agent_attributes = [i for i in expanded_list if i['instance_token'] == agent]
@@ -102,9 +106,9 @@ class NS(Dataset):
             agent_attributes = sorted(agent_attributes, key=(lambda x: _timestamp(x['sample_token'])))
             present = agent_attributes[len(agent_attributes) // 2]
             past = (self._helper.get_past_for_agent(agent, present['sample_token'], 10, False, False) + [present])[:h_d]
-            future = self._helper.get_future_for_agent(agent, present['sample_token'], 10, True, True)[:6]
+            future = self._helper.get_future_for_agent(agent, present['sample_token'], 10, True, True)[:p_d]
             assert len(past) == h_d, len(past)
-            assert len(future) == 6, len(future)
+            assert len(future) == p_d, len(future)
 
             history = np.array([r['translation'][:2] for r in past])
             history = convert_global_coords_to_local(history, present['translation'], present['rotation'])
