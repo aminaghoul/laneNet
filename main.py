@@ -63,7 +63,11 @@ class NS(Dataset):
         self._history_duration = self._config['history_duration']
         self._lane_coordinates = self._config['lane_amount_of_coordinates']
 
+        self._token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
         self._history, self._future, self._lanes, self._neighbors = self._load()
+
+    def __len__(self):
+        return len(self._token_list)
 
     def _load(self):
         h_d = self._history_duration
@@ -71,10 +75,9 @@ class NS(Dataset):
         # singapore-hollandvillage
         # singapore-queenstown
         # boston-seaport
-        token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
         nusc_map = NuScenesMap(map_name=self._config['map_name'], dataroot=self._data_root)
 
-        expanded_list = [self._helper.get_sample_annotation(*i.split("_")) for i in token_list]
+        expanded_list = [self._helper.get_sample_annotation(*i.split("_")) for i in self._token_list]
         instances = set(i['instance_token'] for i in expanded_list)
 
         # Choice of the agent: take the one with the most available samples
