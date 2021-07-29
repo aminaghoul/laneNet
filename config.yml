@@ -4,6 +4,6 @@ ns_args:
   verbose: yes
 
 split: "mini_train"
-map_name: 'boston-seaport'
+map_name: 'singapore-hollandvillage'
 history_duration: 6
 lane_amount_of_coordinates: 150
