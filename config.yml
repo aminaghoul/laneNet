@@ -1,0 +1,5 @@
+ns_args:
+  data_root: 'nuscenes'
+  version: 'v1.0-mini'
+  verbose: yes
+
