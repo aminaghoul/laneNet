@@ -68,7 +68,7 @@ class NS(Dataset):
     def _load(self):
         h_d = self._history_duration
         # singapore-onenorth
-        # singepore-hollandvillage
+        # singapore-hollandvillage
         # singapore-queenstown
         # boston-seaport
         token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
