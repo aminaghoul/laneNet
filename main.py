@@ -61,6 +61,7 @@ class NS(Dataset):
 
         # Parameter useful for later
         self._history_duration = self._config['history_duration']
+        self._lane_coordinates = self._config['lane_amount_of_coordinates']
 
     def train(self):
         h_d = self._history_duration
@@ -128,7 +129,7 @@ class NS(Dataset):
                     first = arcline_path_utils.discretize_lane(record, alpha)
                 return first
 
-            coordinates = np.array([i[:2] for i in split_in_n(nusc_map.get_arcline_path(lane), 100)])
+            coordinates = np.array([i[:2] for i in split_in_n(nusc_map.get_arcline_path(lane), self._lane_coordinates)])
             coordinates = convert_global_coords_to_local(coordinates, present['translation'], present['rotation'])
             lanes_coordinates.append(coordinates)
 
