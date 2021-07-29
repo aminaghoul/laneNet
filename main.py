@@ -59,7 +59,11 @@ class NS(Dataset):
         self._ns = NuScenes(version, dataroot=data_root, verbose=verbose)
         self._helper = PredictHelper(self._ns)
 
+        # Parameter useful for later
+        self._history_duration = self._config['history_duration']
+
     def train(self):
+        h_d = self._history_duration
         # singapore-onenorth
         # singepore-hollandvillage
         # singapore-queenstown
@@ -89,9 +93,9 @@ class NS(Dataset):
         _timestamp = (lambda x: self._helper._timestamp_for_sample(x))
         agent_attributes = sorted(agent_attributes, key=(lambda x: _timestamp(x['sample_token'])))
         present = agent_attributes[len(agent_attributes) // 2]
-        past = (self._helper.get_past_for_agent(agent, present['sample_token'], 10, False, False) + [present])[:6]
+        past = (self._helper.get_past_for_agent(agent, present['sample_token'], 10, False, False) + [present])[:h_d]
         future = self._helper.get_future_for_agent(agent, present['sample_token'], 10, True, True)[:6]
-        assert len(past) == 6, len(past)
+        assert len(past) == h_d, len(past)
         assert len(future) == 6, len(future)
 
         history = np.array([r['translation'][:2] for r in past])
@@ -133,8 +137,8 @@ class NS(Dataset):
             car = min(_cars.values(), key=partial(distance, present))
             _coordinates = self._helper.get_past_for_agent(car['instance_token'], car['sample_token'], 10, False,
                                                            False) + [car]
-            _coordinates = [r['translation'][:2] for r in _coordinates[:6]]
-            _coordinates = [(-np.inf, -np.inf)] * (6 - len(_coordinates)) + _coordinates
+            _coordinates = [r['translation'][:2] for r in _coordinates[:h_d]]
+            _coordinates = [(-np.inf, -np.inf)] * (h_d - len(_coordinates)) + _coordinates
             _coordinates = np.array(_coordinates)
             _coordinates = convert_global_coords_to_local(_coordinates, present['translation'], present['rotation'])
             car_coordinates[int(all_lanes.index(lane))] = _coordinates
