@@ -50,8 +50,8 @@ def distance_lane(reference_map, reference, lane):
 class NS(Dataset):
     def __init__(self, config_path):
         with open(config_path, 'r') as yaml_file:
-            config = yaml.safe_load(yaml_file)
-        ns_args = config['ns_args']
+            self._config = yaml.safe_load(yaml_file)
+        ns_args = self._config['ns_args']
         self._data_root = data_root = ns_args['data_root']
         version, verbose = ns_args['version'], ns_args['verbose']
 
@@ -60,22 +60,30 @@ class NS(Dataset):
         self._helper = PredictHelper(self._ns)
 
     def train(self):
-        token_list = get_prediction_challenge_split("mini_train", dataroot=self._data_root)
-        nusc_map = NuScenesMap(map_name='singapore-onenorth', dataroot=self._data_root)
+        # singapore-onenorth
+        # singepore-hollandvillage
+        # singapore-queenstown
+        # boston-seaport
+        token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
+        nusc_map = NuScenesMap(map_name=self._config['map_name'], dataroot=self._data_root)
 
         expanded_list = [self._helper.get_sample_annotation(*i.split("_")) for i in token_list]
         instances = set(i['instance_token'] for i in expanded_list)
 
         # Choice of the agent: take the one with the most available samples
         try:
-            agent = open('/dev/shm/_____agent.bin', 'r').read().strip()
+            agent = open('/dev/shm/cached_%s_%s_agent.bin' % (
+                self._config['map_name'], self._config['split']
+            ), 'r').read().strip()
         except FileNotFoundError:
             availability = defaultdict(int)
             for attributes in expanded_list:
                 if nusc_map.get_closest_lane(*attributes['translation'][:2], 5):
                     availability[attributes['instance_token']] += 1
             agent = max(instances, key=(lambda x: availability.get(x, -1)))
-            open('/dev/shm/_____agent.bin', 'w').write(agent)
+            open('/dev/shm/cached_%s_%s_agent.bin' % (
+                self._config['map_name'], self._config['split']
+            ), 'w').write(agent)
 
         agent_attributes = [i for i in expanded_list if i['instance_token'] == agent]
         _timestamp = (lambda x: self._helper._timestamp_for_sample(x))

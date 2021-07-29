@@ -3,3 +3,5 @@ ns_args:
   version: 'v1.0-mini'
   verbose: yes
 
+split: "mini_train"
+map_name: 'boston-seaport'
