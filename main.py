@@ -50,10 +50,9 @@ def distance_lane(reference_map, reference, lane):
 class NS(Dataset):
     def __init__(self, config_path):
         with open(config_path, 'r') as yaml_file:
-            self._config = yaml.safe_load(yaml_file)
-        ns_args = self._config['ns_args']
-        self._data_root = data_root = ns_args['data_root']
-        version, verbose = ns_args['version'], ns_args['verbose']
+            self._config = yaml.safe_load(yaml_file)['ns_args']
+        self._data_root = data_root = self._config['data_root']
+        version, verbose = self._config['version'], self._config['verbose']
 
         # Useful objects
         self._ns = NuScenes(version, dataroot=data_root, verbose=verbose)
