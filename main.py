@@ -63,7 +63,9 @@ class NS(Dataset):
         self._history_duration = self._config['history_duration']
         self._lane_coordinates = self._config['lane_amount_of_coordinates']
 
-    def train(self):
+        self._history, self._future, self._lanes, self._neighbors = self._load()
+
+    def _load(self):
         h_d = self._history_duration
         # singapore-onenorth
         # singepore-hollandvillage
@@ -147,18 +149,12 @@ class NS(Dataset):
                 car['instance_token'], car['sample_token'])
 
         print(car_coordinates)
-        # V^(p)
-        _ = np.array(history)
-        # V^(f)
-        _ = np.array(future)
-        # L^n
-        _ = np.array(lanes_coordinates)
-        # V^n
-        _ = np.array(car_coordinates)
         print(history[:1])
         print(lanes_coordinates[:1])
         print(car_coordinates[:1])
+        # V^(p), V^(f), L^n, V^n
+        return np.array(history), np.array(future), np.array(lanes_coordinates), np.array(car_coordinates)
 
 
 if __name__ == '__main__':
-    NS('config.yml').train()
+    NS('config.yml')
