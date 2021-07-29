@@ -25,8 +25,6 @@ def is_neighbor(reference, item_attrs, radius=10) -> bool:
     :param radius: In meters.
     :return:
     """
-    '''if item_attrs['category_name'] != 'vehicle.car':
-        return False'''
     xa, ya, za = reference['translation']
     xb, yb, zb = item_attrs['translation']
     xc, yc = xa - xb, ya - yb
@@ -79,83 +77,95 @@ class NS(Dataset):
         expanded_list = [self._helper.get_sample_annotation(*i.split("_")) for i in self._token_list]
         instances = set(i['instance_token'] for i in expanded_list)
 
+        grand_history, grand_future, grand_lanes, grand_neighbors = [], [], [], []
+
         # Choice of the agent: take the one with the most available samples
         try:
-            agent = open('/dev/shm/cached_%s_%s_agent.bin' % (
+            agents = open('/dev/shm/cached_%s_%s_agents.bin' % (
                 self._config['map_name'], self._config['split']
-            ), 'r').read().strip()
+            ), 'r').read().strip().split(',')
         except FileNotFoundError:
             availability = defaultdict(int)
             for attributes in expanded_list:
+                if attributes['category_name'] != 'vehicle.car':
+                    continue
                 if nusc_map.get_closest_lane(*attributes['translation'][:2], 5):
                     availability[attributes['instance_token']] += 1
-            agent = max(instances, key=(lambda x: availability.get(x, -1)))
-            open('/dev/shm/cached_%s_%s_agent.bin' % (
+            agents = list(filter((lambda x: availability.get(x, -1) > (h_d + 6)), instances))
+            open('/dev/shm/cached_%s_%s_agents.bin' % (
                 self._config['map_name'], self._config['split']
-            ), 'w').write(agent)
+            ), 'w').write(','.join(agents))
 
-        agent_attributes = [i for i in expanded_list if i['instance_token'] == agent]
-        _timestamp = (lambda x: self._helper._timestamp_for_sample(x))
-        agent_attributes = sorted(agent_attributes, key=(lambda x: _timestamp(x['sample_token'])))
-        present = agent_attributes[len(agent_attributes) // 2]
-        past = (self._helper.get_past_for_agent(agent, present['sample_token'], 10, False, False) + [present])[:h_d]
-        future = self._helper.get_future_for_agent(agent, present['sample_token'], 10, True, True)[:6]
-        assert len(past) == h_d, len(past)
-        assert len(future) == 6, len(future)
+        for agent in agents:
+            agent_attributes = [i for i in expanded_list if i['instance_token'] == agent]
+            _timestamp = (lambda x: self._helper._timestamp_for_sample(x))
+            agent_attributes = sorted(agent_attributes, key=(lambda x: _timestamp(x['sample_token'])))
+            present = agent_attributes[len(agent_attributes) // 2]
+            past = (self._helper.get_past_for_agent(agent, present['sample_token'], 10, False, False) + [present])[:h_d]
+            future = self._helper.get_future_for_agent(agent, present['sample_token'], 10, True, True)[:6]
+            assert len(past) == h_d, len(past)
+            assert len(future) == 6, len(future)
 
-        history = np.array([r['translation'][:2] for r in past])
-        history = convert_global_coords_to_local(history, present['translation'], present['rotation'])
+            history = np.array([r['translation'][:2] for r in past])
+            history = convert_global_coords_to_local(history, present['translation'], present['rotation'])
 
-        all_lanes = set()
-        cars_on_lanes = dict()
+            all_lanes = set()
+            cars_on_lanes = dict()
 
-        for neighbor in self._helper.get_annotations_for_sample(present['sample_token']):
-            if not is_neighbor(present, neighbor, ):
-                continue
-            lane = nusc_map.get_closest_lane(*neighbor['translation'][:2], 1)
-            if not lane:
-                continue
-            all_lanes.add(lane)
-            cars_on_lanes.setdefault(lane, {})[neighbor['instance_token']] = neighbor
+            for neighbor in self._helper.get_annotations_for_sample(present['sample_token']):
+                if not is_neighbor(present, neighbor, ):
+                    continue
+                lane = nusc_map.get_closest_lane(*neighbor['translation'][:2], 1)
+                if not lane:
+                    continue
+                all_lanes.add(lane)
+                cars_on_lanes.setdefault(lane, {})[neighbor['instance_token']] = neighbor
 
-        distance_lanes = dict((i, distance_lane(nusc_map, present, i)) for i in all_lanes)
-        all_lanes = sorted(all_lanes, key=distance_lanes.get)
-        lanes_coordinates = []
-        for lane in all_lanes:
-            def split_in_n(record, n):
-                alpha = 0.1
-                first = arcline_path_utils.discretize_lane(record, alpha)
-                while len(first) != n:
-                    if len(first) > n:
-                        alpha += 0.0001
-                    else:
-                        alpha -= 0.0001
+            distance_lanes = dict((i, distance_lane(nusc_map, present, i)) for i in all_lanes)
+            all_lanes = sorted(all_lanes, key=distance_lanes.get)
+            lanes_coordinates = []
+            for lane in all_lanes:
+                def split_in_n(record, n):
+                    alpha = 0.1
                     first = arcline_path_utils.discretize_lane(record, alpha)
-                return first
+                    while len(first) != n:
+                        if len(first) > n:
+                            alpha += 0.0001
+                        else:
+                            alpha -= 0.0001
+                        first = arcline_path_utils.discretize_lane(record, alpha)
+                    return first
 
-            coordinates = np.array([i[:2] for i in split_in_n(nusc_map.get_arcline_path(lane), self._lane_coordinates)])
-            coordinates = convert_global_coords_to_local(coordinates, present['translation'], present['rotation'])
-            lanes_coordinates.append(coordinates)
+                coordinates = np.array(
+                    [i[:2] for i in split_in_n(nusc_map.get_arcline_path(lane), self._lane_coordinates)])
+                coordinates = convert_global_coords_to_local(coordinates, present['translation'], present['rotation'])
+                lanes_coordinates.append(coordinates)
 
-        car_coordinates: List[Any] = [None] * len(lanes_coordinates)
-        for lane, _cars in cars_on_lanes.items():
-            car = min(_cars.values(), key=partial(distance, present))
-            _coordinates = self._helper.get_past_for_agent(car['instance_token'], car['sample_token'], 10, False,
-                                                           False) + [car]
-            _coordinates = [r['translation'][:2] for r in _coordinates[:h_d]]
-            _coordinates = [(-np.inf, -np.inf)] * (h_d - len(_coordinates)) + _coordinates
-            _coordinates = np.array(_coordinates)
-            _coordinates = convert_global_coords_to_local(_coordinates, present['translation'], present['rotation'])
-            car_coordinates[int(all_lanes.index(lane))] = _coordinates
-            assert car['sample_token'] == present['sample_token'], (
-                car['instance_token'], car['sample_token'])
+            car_coordinates: List[Any] = [None] * len(lanes_coordinates)
+            for lane, _cars in cars_on_lanes.items():
+                car = min(_cars.values(), key=partial(distance, present))
+                _coordinates = self._helper.get_past_for_agent(car['instance_token'], car['sample_token'], 10, False,
+                                                               False) + [car]
+                _coordinates = [r['translation'][:2] for r in _coordinates[:h_d]]
+                _coordinates = [(-np.inf, -np.inf)] * (h_d - len(_coordinates)) + _coordinates
+                _coordinates = np.array(_coordinates)
+                _coordinates = convert_global_coords_to_local(_coordinates, present['translation'], present['rotation'])
+                car_coordinates[int(all_lanes.index(lane))] = _coordinates
+                assert car['sample_token'] == present['sample_token'], (
+                    car['instance_token'], car['sample_token'])
 
-        print(car_coordinates)
-        print(history[:1])
-        print(lanes_coordinates[:1])
-        print(car_coordinates[:1])
+            print(car_coordinates)
+            print(history[:1])
+            print(lanes_coordinates[:1])
+            print(car_coordinates[:1])
+
+            grand_history.append(np.array(history))
+            grand_future.append(np.array(future))
+            grand_lanes.append(np.array(lanes_coordinates))
+            grand_neighbors.append(np.array(car_coordinates))
+
         # V^(p), V^(f), L^n, V^n
-        return np.array(history), np.array(future), np.array(lanes_coordinates), np.array(car_coordinates)
+        return grand_history, grand_future, grand_lanes, grand_neighbors
 
 
 if __name__ == '__main__':
