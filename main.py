@@ -1,3 +1,4 @@
+import pickle
 from collections import defaultdict
 from functools import partial
 from typing import List, Any
@@ -6,7 +7,7 @@ import numpy as np
 import yaml
 from nuscenes.eval.prediction.splits import get_prediction_challenge_split
 from nuscenes.map_expansion import arcline_path_utils
-from nuscenes.map_expansion.map_api import NuScenesMap
+from nuscenes.map_expansion.map_api import NuScenesMap, locations
 from nuscenes.prediction import PredictHelper, convert_global_coords_to_local
 from torch.utils.data import Dataset
 
@@ -46,9 +47,17 @@ def distance_lane(reference_map, reference, lane):
 
 
 class NS(Dataset):
-    def __init__(self, config_path):
+    @classmethod
+    def every_map(cls, config_path):
+        for map_name in locations:
+            yield NS(config_path, map_name)
+
+    def __init__(self, config_path, map_name):
         with open(config_path, 'r') as yaml_file:
             self._config = yaml.safe_load(yaml_file)['ns_args']
+
+        self._map_name = map_name
+
         self._data_root = data_root = self._config['data_root']
         version, verbose = self._config['version'], self._config['verbose']
 
@@ -62,7 +71,18 @@ class NS(Dataset):
         self._prediction_duration = self._config['prediction_duration']
 
         self._token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
-        self._history, self._future, self._lanes, self._neighbors = self._load()
+        try:
+            with open('/dev/shm/cached__%s_%s_%d_%d_agents.bin' % (
+                    self._map_name, self._config['split'],
+                    self._history_duration, self._prediction_duration), 'rb') as f:
+                self._history, self._future, self._lanes, self._neighbors = pickle.load(f)
+        except FileNotFoundError:
+            self._history, self._future, self._lanes, self._neighbors = self._load()
+            content = pickle.dumps([self._history, self._future, self._lanes, self._neighbors])
+            with open('/dev/shm/cached__%s_%s_%d_%d_agents.bin' % (
+                    self._map_name, self._config['split'],
+                    self._history_duration, self._prediction_duration), 'wb') as f:
+                f.write(content)
 
     def __len__(self):
         return len(self._token_list)
@@ -70,11 +90,7 @@ class NS(Dataset):
     def _load(self):
         h_d = self._history_duration
         p_d = self._prediction_duration
-        # singapore-onenorth
-        # singapore-hollandvillage
-        # singapore-queenstown
-        # boston-seaport
-        nusc_map = NuScenesMap(map_name=self._config['map_name'], dataroot=self._data_root)
+        nusc_map = NuScenesMap(map_name=self._map_name, dataroot=self._data_root)
 
         expanded_list = [self._helper.get_sample_annotation(*i.split("_")) for i in self._token_list]
         instances = set(i['instance_token'] for i in expanded_list)
@@ -84,7 +100,7 @@ class NS(Dataset):
         # Choice of the agent: take the one with the most available samples
         try:
             agents = open('/dev/shm/cached_%s_%s_%d_%d_agents.bin' % (
-                self._config['map_name'], self._config['split'], h_d, p_d
+                self._map_name, self._config['split'], h_d, p_d
             ), 'r').read().strip().split(',')
         except FileNotFoundError:
             availability = defaultdict(int)
@@ -95,7 +111,7 @@ class NS(Dataset):
                     availability[attributes['instance_token']] += 1
             agents = list(filter((lambda x: availability.get(x, -1) > (h_d + p_d)), instances))
             open('/dev/shm/cached_%s_%s_%d_%d_agents.bin' % (
-                self._config['map_name'], self._config['split'], h_d, p_d
+                self._map_name, self._config['split'], h_d, p_d
             ), 'w').write(','.join(agents))
 
         print('Found %d candidates' % len(agents))
@@ -173,4 +189,5 @@ class NS(Dataset):
 
 
 if __name__ == '__main__':
-    NS('config.yml')
+    for ns in NS.every_map('config.yml'):
+        pass
