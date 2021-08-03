@@ -19,6 +19,7 @@ from torch.utils.data import Dataset
 from nuscenes import NuScenes
 
 # Define the radius we have when looking for a lane
+# TODO: Use this or delete this
 IS_ON_LANE = 1
 
 
@@ -56,21 +57,30 @@ def distance_lane(reference_map, reference, lane):
 
 class NS(Dataset):
     @classmethod
-    def every_map(cls, config_path):
-        """output = Queue()
+    def every_map(cls, config_path, multi_thread=False):
+        # TODO: Test the method with multi_thread on
+        def worker(_map_name: str):
+            try:
+                output.put((None, NS(config_path, _map_name)))
+            except BaseException as exception:
+                output.put((exception, None))
 
-        def acquire(name):
-            output.put(NS(config_path, name))
-
-        for map_name in locations:
-            Thread(target=acquire, args=[map_name]).start()
-
-        for i in range(len(locations)):
-            yield output.get()"""
-
-        for map_name in locations:
-            yield NS(config_path, map_name)
-        # yield NS(config_path, 'singapore-onenorth')
+        if multi_thread:
+            output = Queue()
+            for map_name in locations:
+                Thread(
+                    target=worker,
+                    args=[map_name],
+                    daemon=True).start()
+            for index in range(len(locations)):
+                error, result = output.get()
+                # TODO: Stop the other workers
+                if error is not None:
+                    raise error
+                yield result
+        else:
+            for map_name in locations:
+                yield NS(config_path, map_name)
 
     def __init__(self, config_path, map_name):
         with open(config_path, 'r') as yaml_file:
@@ -101,17 +111,22 @@ class NS(Dataset):
         self._token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
         try:
             # raise FileNotFoundError
-            with open('/dev/shm/cached_v2bis_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v2_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'rb') as f:
                 self._history, self._future, self._lanes, self._neighbors = pickle.load(f)
         except FileNotFoundError:
             self._history, self._future, self._lanes, self._neighbors = self._load()
             content = pickle.dumps([self._history, self._future, self._lanes, self._neighbors])
-            with open('/dev/shm/cached_v2bis_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v2_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'wb') as f:
                 f.write(content)
+
+    def __len__(self):
+        # TODO: Remove this
+        # print('Length', len(self._history))
+        return len(self._history)
 
     def _load(self):
         h_d = self._history_duration
@@ -135,7 +150,7 @@ class NS(Dataset):
                     continue
                 if nusc_map.get_closest_lane(*attributes['translation'][:2], 3):
                     availability[attributes['instance_token']] += 1
-            agents = list(filter((lambda x: availability.get(x, -1) > (h_d + p_d)), instances))
+            agents = list(filter((lambda x: availability.get(x, -1) > (h_d + p_d + 1)), instances))
             open('/dev/shm/cached_agent_v2_%s_%s_%d_%d_agents.bin' % (
                 self._map_name, self._config['split'], h_d, p_d
             ), 'w').write(','.join(agents))
@@ -156,7 +171,7 @@ class NS(Dataset):
             #  as the origin of the map.
             # TODO: Can we iterate through all the different possibilities we have?
             # We will select the current one to be the first step that allow us
-            #  to have h_d - 1 points in the past and p_d points in the future.
+            #  to have h_d points in the past and p_d points in the future.
             present = agent_attributes[h_d]
 
             # We take more than needed, then truncate to take only what we need.
@@ -169,20 +184,21 @@ class NS(Dataset):
             # - truncate in the future means take the p_d first
             future = self._helper.get_future_for_agent(agent, present['sample_token'], p_d * 1.5, False, False)[:p_d]
 
-            # - truncate in the past means take the h_d first, and include the current one at the beginning.
+            # - truncate in the past means take the h_d first, then include the current one at the beginning.
             # - we don't limit the past as much as the future in order to make sure we are able to recover
             #   the past locations of the neighbors using `extended_past`
             past = [present] + self._helper.get_past_for_agent(agent, present['sample_token'], h_d * 15, False, False)
-            extended_past, past = past, past[:h_d]
+            extended_past, past = past, past[:h_d + 1]
 
             # This is important to have consistency in our data
-            assert len(past) == h_d, len(past)
+            assert len(past) == h_d + 1, len(past)
             assert len(future) == p_d, len(future)
 
-            # This is the first input of our network, the last locations of the target agent
+            # This is a part of the first input of our network,
+            #  the last locations of the target agent, a.k.a Vp
             past_translations = np.array([r['translation'][:2] for r in past])
 
-            # This will be used when training our network, as the expected result
+            # This will be used when training our network, as the expected result, a.k.a Vf
             future_translations = np.array([r['translation'][:2] for r in future])
 
             # We will convert the translations from global to local
@@ -191,16 +207,30 @@ class NS(Dataset):
             past_translations = convert_global_coords_to_local(
                 past_translations, present['translation'], present['rotation'])
 
+            # We will then add the other parameters (v, a, theta)
+            # TODO: Create a private method to do this, as we will
+            #  be also doing this later for the neighbors
             for side, records, translations in (
                     ('past', past, past_translations),
                     ('future', future, future_translations)):
+                # I'm not used to numpy, therefore I'll be using Python
+                #  objects (lists) for this, then convert the whole
+                #  list into a numpy array at the end.
                 coordinates = []
+
+                # We get the translations separately, as requesting the whole
+                #  records cause the helper methods to not preprocess the
+                #  coordinates.
                 for record, (x, y) in zip(records, translations):
+                    # I'll be using those two often below
                     token = record['instance_token'], record['sample_token']
 
+                    # We simply use the methods exposed by the helper
                     v = self._helper.get_velocity_for_agent(*token)
                     a = self._helper.get_acceleration_for_agent(*token)
                     theta = self._helper.get_heading_change_rate_for_agent(*token)
+
+                    # Sometimes values cannot be given, so nan is chosen as a replacement
                     _f = (lambda _arg: 0 if np.isnan(_arg) else _arg)
                     coordinates.append((x, y, *map(_f, (v, a, theta))))
 
@@ -212,11 +242,10 @@ class NS(Dataset):
                     # Or do nothing if the order is already correct
                     future_translations = np.array(list(coordinates))
 
-            # This will be used to make sure we compare what is comparable, i.e
-            #  to make sure that all the coordinates are taken in the same sample,
-            #  for instance the second neighbor's third coordinates should be taken
-            #  exactly when the fifth neighbor's third coordinates was taken.
-            # We use an extended amount of points because it is better than guessing.
+            # We use an extended amount of points to find out the previous lanes in which
+            #  the cars were recorded.
+            # TODO: Decide whether or not remove this, as it would probably be easier to
+            #  just request the full past of the instance from the helper.
             target_agent_extended_past_timeline = [i['sample_token'] for i in extended_past]
 
             all_lanes = set()
@@ -224,13 +253,26 @@ class NS(Dataset):
 
             # TODO: Make sure the neighbor is actually on the road
             # TODO: Make sure the neighbor is not running against the direction
+            # TODO: Instead of using only the current state, see if I can use the
+            #  whole scene, for instance by using weighted sums.
+            # We take all the vehicles in the scene, find out if they are on a lane, then
+            #  add them to their assigned lanes. Later we will select one actor per lane
+            #  but for now all of the vehicles are added.
             for neighbor in self._helper.get_annotations_for_sample(present['sample_token']):
+                # We should not care about road signs, pedestrians, etc, as we won't be
+                #  able to associate a lane to them, and as their behaviour will not match
+                #  a car's behaviour.
+                # TODO: Is it possible to still be able to take them into account?
                 if neighbor["category_name"].split('.')[0] != 'vehicle':
                     continue
-                lane = nusc_map.get_closest_lane(*neighbor['translation'][:2], 1)
+                # We take the closest lane and assign the vehicle to it
+                lane = nusc_map.get_closest_lane(*neighbor['translation'][:2], IS_ON_LANE)
+                # If the vehicle is too far from any lanes, then it does not matter
                 if not lane:
                     continue
                 all_lanes.add(lane)
+                # We store the vehicle's attributes, as well as the projected point, a useful
+                #  information used later to determine the lane coordinates.
                 cars_on_lanes.setdefault(lane, {})[neighbor['instance_token']] = dict(
                     neighbor=neighbor, projected_point=arcline_path_utils.project_pose_to_lane(
                         pose=neighbor['translation'], lane=nusc_map.get_arcline_path(lane)))
@@ -238,6 +280,8 @@ class NS(Dataset):
             # Make sure that we can split it in 100
             assert (self._precision_lane * 100).is_integer()
 
+            # We define this to be able to have lanes and neighbors sorted based on their
+            #  distances from the target agent at the present moment.
             distance_lanes = dict((i, distance_lane(nusc_map, present, i)) for i in all_lanes)
             # We removed the limit for debugging purposes, we moved the limit at the end, right
             #  before returning the neighbors and lanes
@@ -245,32 +289,46 @@ class NS(Dataset):
             cars_on_lanes = dict((i, j) for i, j in cars_on_lanes.items() if i in all_lanes)
             lanes_coordinates = []
 
+            # This will be used in the network as the Vn inputs
             car_coordinates: List[Any] = [None] * len(all_lanes)
+            # This does not seem to be used, however I'll wait before removing it
+            # TODO: See if I can remove this safely
             car_projected_transform: List[Any] = [None] * len(all_lanes)
+            # Unlike its name might lead to believe, this will only contain the instance_token
+            # TODO: Rename variables
+            # TODO: Find all Any in variable descriptions and replace with expected types
             car_projected_attributes: List[Any] = [None] * len(all_lanes)
 
-            # Populate the `car_coordinates` list (which will be used in the network)
+            # Populate the `car_coordinates` list (which will be used in the network) as well as the
+            # `car_projected_attributes` (used to determine lanes coordinates).
             for lane, _cars in cars_on_lanes.items():
+                # We select the neighbor based on the distance (in the present) between it
+                #  and the target agent.
+                # TODO: See if there are better ways to do it, for instance using the distance
+                #  to the center of the lane, or by using multiple time steps instead of only
+                #  the current one.
                 full_car = min(_cars.values(), key=(lambda x: distance(present, x['neighbor'])))
+                # We define this to hold the attributes
                 car = full_car['neighbor']
                 # The duration is in seconds, `self._history_duration` is in coordinates,
-                #  self._history_duration is equal to tau + 1, therefore:
-                #   duration = (self._history_duration-1) / 2
+                #  self._history_duration is equal to tau, therefore:
+                #   duration = self._history_duration / 2
                 #  However I don't care as I will simply remove any excess later
                 duration = self._history_duration
                 # I use the present after the past because it should be included in the list,
                 #  and I do this now to avoid having to do the work twice, once for the past
                 #  and once for the present
                 # TODO: Make sure that the current attributes are not present in the list
-                _past_records = self._helper.get_past_for_agent(
-                    car['instance_token'], car['sample_token'], duration, False, False) + [car]
-                _past_records = _past_records[:h_d]
+                _past_records = [car] + self._helper.get_past_for_agent(
+                    car['instance_token'], car['sample_token'], duration, False, False)
+                _past_records = _past_records[:h_d + 1]
 
                 # We start by defining the x, y values in the correct referential
                 _xy = np.array([r['translation'][:2] for r in _past_records])
                 _xy = convert_global_coords_to_local(_xy, present['translation'], present['rotation'])
 
                 # Each coordinates will be (x, y, v, a, theta)
+                # For more info, see above when we do the same for the target agent.
                 _coordinates = []
                 for index, (record, (x, y)) in enumerate(zip(_past_records, _xy)):
                     token = record['instance_token'], record['sample_token']
@@ -281,10 +339,10 @@ class NS(Dataset):
                     _f = (lambda _arg: 0 if np.isnan(_arg) else _arg)
                     _coordinates.append((x, y, *map(_f, (v, a, theta))))
 
-                # We pad by adding extra zeroes than trimming the list
-                _coordinates.extend((0, 0, 0, 0, 0) for i in range(h_d))
-                # We then reverse the array to have the correct order
-                _coordinates = np.array(list(reversed(_coordinates[:h_d])))
+                # We pad by adding extra zeroes then trimming the list
+                _coordinates.extend((0, 0, 0, 0, 0) for i in range(h_d + 1))
+                # We then reverse the array to have the correct order (past to present)
+                _coordinates = np.array(list(reversed(_coordinates[:h_d + 1])))
 
                 # TODO: Replace every instance of -np.inf into 0
 
@@ -303,10 +361,13 @@ class NS(Dataset):
                 :return:
                 """
 
+                # TODO: De indent this
                 if True:
                     # The first step will be to retrieve all the attributes of the instance
                     # Note: it does not matter if we get too much points, as this function
                     #  will not be responsible for the neighbors coordinates
+                    # TODO: Reduce the length of this function by only calling the helper to
+                    #  request the whole past of the instance.
                     try:
                         current_agent_past_attributes = [self._helper.get_sample_annotation(
                             instance_token, sample_token) for sample_token in past_timeline]
@@ -314,6 +375,7 @@ class NS(Dataset):
                         return []
                     current_agent_current_attributes = current_agent_past_attributes[0]
 
+                    # TODO: Dispose of this
                     """bitmap = BitMap(nusc_map.dataroot, nusc_map.map_name, 'basemap')
                     fig, ax = nusc_map.render_layers(['lane'], figsize=1, bitmap=bitmap)
                     for x in current_agent_past_attributes:
@@ -337,22 +399,31 @@ class NS(Dataset):
 
                     current_agent_past_lanes = list(
                         unique(map(retrieve_associated_lane, current_agent_past_attributes)))
+                    # If the car leaves the road, then we don't want to deal with it.
+                    # TODO: Is this necessary?
                     if '' in current_agent_past_lanes:
                         return []
-                    # print(current_agent_past_lanes)
+                    # Concatenate all the roads that are unambiguous (if there is only
+                    #  one way in, it is most likely the way used by the car)
+                    # TODO: Is this still necessary?
                     while True:
                         _tmp = nusc_map.get_incoming_lane_ids(current_agent_past_lanes[-1])
                         if len(_tmp) != 1:
                             break
+                        # If the length is 1, it's like adding the element 0
                         current_agent_past_lanes.extend(_tmp)
 
+                    # TODO: Think about removing the unused commented out variables
                     # reference_translation_beforehand = current_agent_past_attributes[1]['translation']
+                    # This will be used as the reference point to know where to start in the road
                     reference_translation = current_agent_current_attributes['translation']
                     # See below: reference_yaw =
                     #  quaternion_yaw(Quaternion(current_agent_current_attributes['rotation']))
 
-                    for index, current_agent_past_lane in enumerate(current_agent_past_lanes):
-                        # print(index, current_agent_past_lane)
+                    # The first variable is named after its only use in this loop
+                    # TODO: Instead of this, what about having the first case outside of the loop?
+                    for is_not_the_first_lane, current_agent_past_lane in enumerate(current_agent_past_lanes):
+                        # Extract the record, then use it to extract the coordinates.
                         current_agent_past_lane_record = nusc_map.get_arcline_path(current_agent_past_lane)
                         current_agent_past_lane_coordinates = arcline_path_utils.discretize_lane(
                             current_agent_past_lane_record, 0.01)
@@ -368,10 +439,15 @@ class NS(Dataset):
                         # assert abs(reference_yaw - projected_coordinates[-1]) < 0.1, (
                         #     reference_yaw, projected_coordinates, current_agent_current_attributes)
 
-                        if index:
+                        if is_not_the_first_lane:
+                            # I have to make sure we are near the exit of the previous lane.
+                            # TODO: I made a typo, but don't want to change it yet by fear of unexpected errors
                             assert np.linalg.norm(
                                 np.array(projected_coordinates[:2]) - np.array(projected_coordinates[:2])) < 1, (
                                 projected_coordinates, current_agent_past_lane_coordinates[-1])
+                            # The coordinates are (I assume) ordered from entrance to exit
+                            # TODO: Make sure this is the case.
+                            # TODO: Since I will only use the lane tokens, is this really necessary?
                             past_coordinates = current_agent_past_lane_coordinates + past_coordinates
                         else:
                             # This is useful to see what to keep and what to throw away.
@@ -491,6 +567,7 @@ class NS(Dataset):
             multiples = [list(range(j)) for i, j in enumerate(total_possibilities) if j > 1]
 
             # I wrote this code so I have to do more checks to make sure if it works th way I want
+            # TODO: What I just said
             possibilities = [[]]
             for after in multiples:
                 _new_possibilities = []
@@ -499,12 +576,11 @@ class NS(Dataset):
                         _new_possibilities.append((*possibility, j))
                 possibilities = _new_possibilities
 
-            def inf_list(_a, _b):
-                return np.zeros((_a, _b))
+            # TODO: Is it good to have zeroes in the inputs?
 
-            if self._n != len(neighbors_row):
+            if self._n > len(neighbors_row):
                 # Dimension: N, n_coordinates, 2
-                neighbors_row = neighbors_row + [inf_list(h_d, 5) for _ in range(self._n - len(neighbors_row))]
+                neighbors_row = neighbors_row + [np.zeros((h_d + 1, 5)) for _ in range(self._n - len(neighbors_row))]
 
             print('%s possibilities' % len(possibilities))
             for possibility in possibilities:
@@ -522,10 +598,10 @@ class NS(Dataset):
                 else:
                     raise RuntimeError
 
-                if self._n != len(lanes_coordinates):
+                if self._n > len(lanes_coordinates):
                     # Dimension: N, n_coordinates, 2
                     lanes_coordinates = lanes_coordinates + [
-                        inf_list(self._lane_coordinates, 2) for _ in range(self._n - len(lanes_coordinates))]
+                        np.zeros((self._lane_coordinates, 2)) for _ in range(self._n - len(lanes_coordinates))]
                 new_history.append(history_row)
                 new_future.append(future_row)
                 # We put back the limit in case we got more than N
@@ -544,6 +620,7 @@ class NS(Dataset):
 
                 # _, distance_index = min((j, i) for i, j in enumerate(distances))
 
+                # TODO: Dispose of this or create a method
                 def void():
                     import matplotlib.pyplot
                     __x = [j[0] for j in history_row]
@@ -563,6 +640,7 @@ class NS(Dataset):
                     matplotlib.pyplot.legend()
                     matplotlib.pyplot.show()
 
+                # TODO: Dispose of this or create a method
                 """
                     matplotlib.pyplot.plot(list(__x), list(__y))
                 __x = [j['translation'][0] for j in current_agent_past_attributes]
@@ -575,19 +653,18 @@ class NS(Dataset):
         # V^(p), V^(f), L^n, V^n
         return new_history, new_future, new_lanes, new_neighbors
 
-    def __len__(self):
-        print('Length', len(self._history))
-        return len(self._history)
-
     def __getitem__(self, item):
-        print('Item', item, len(self._history[item]), len(self._future[item]), len(self._lanes[item]),
-              len(self._neighbors[item]), (self._history[item]).shape, (self._future[item]).shape,
-              (self._lanes[item]).shape,
-              (self._neighbors[item]), )
+        # TODO: Dispose of this
+        # print
+        ('Item', item, len(self._history[item]), len(self._future[item]), len(self._lanes[item]),
+         len(self._neighbors[item]), (self._history[item]).shape, (self._future[item]).shape,
+         (self._lanes[item]).shape,
+         (self._neighbors[item]),)
         return self._history[item], self._future[item], self._lanes[item], self._neighbors[item]
 
     def _get_possibilities(self, starting_lane: str, remaining_size: int, side='outgoing', *previous_lanes):
         # TODO: See if we can do something about the case in which we get not roads
+        # TODO: Tests and documentation
         for possible_lane in getattr(self._nusc_map, 'get_%s_lane_ids' % side)(starting_lane):
             possible_record = self._nusc_map.get_arcline_path(possible_lane)
             possible_length = math.floor(length_of_lane(possible_record) * 100)
@@ -601,6 +678,7 @@ class NS(Dataset):
                     yield tuple((*previous_lanes, possible_lane))
 
     def _verify_possibility(self, *lanes, cut_index):
+        # TODO: Tests, documentation and refactoring
         import matplotlib.pyplot
         lanes = list(map(self._nusc_map.get_arcline_path, lanes))
         lanes = list(map(partial(arcline_path_utils.discretize_lane, resolution_meters=0.01), lanes))

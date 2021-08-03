@@ -16,6 +16,8 @@ config_file = 'config.yml'
 with open(config_file, 'r') as yaml_file:
     config = yaml.safe_load(yaml_file)
 
+# Initialize device:
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 # Initialize datasets and dataloaders:
 batch_size = 32
 tr_set = NS.every_map('config.yml')
@@ -40,21 +42,17 @@ class SuperNS(Dataset):
 
 
 if __name__ == '__main__':
-    tr_set = SuperNS()
-    tr_dl = DataLoader(
-        tr_set,
-        batch_size=32,
-        shuffle=True,
-        num_workers=8)
 
+    tr_set = SuperNS()
+    tr_dl = DataLoader(tr_set, batch_size=batch_size, shuffle=False, num_workers=8)
     print(len(next(iter(tr_dl))))
 
 
-    # Initialize Models:
-    net = LaneNet('config.yml').float().to(
-        device=torch.device("cuda:0" if torch.cuda.is_available() else "cpu"))
 
-    exit()
+    # Initialize Models:
+    net = LaneNet('config.yml').float().to(device)
+
+
     # Initialize Optimizer:
     num_epochs = 25
     optimizer = torch.optim.Adam(net.parameters(), lr=0.0001)
@@ -92,13 +90,27 @@ if __name__ == '__main__':
         # Load batch
         for i, data in enumerate(tr_dl):
 
-            hist, nbrs, mask, lat_enc, lon_enc, fut, op_mask = data
+            history, future, lanes, neighbors = data
 
-            parameters = hist, lanes, voisins
+            history = history.float().to(device)
+            future = future.float().to(device)
+            lanes = lanes.float().to(device)
+            neighbors = neighbors.float().to(device)
+
+            history = torch.permute(history, (0, 2, 1))
+            future = torch.permute(future, (0, 2, 1))
+            lanes = torch.permute(lanes, (1, 0, 3, 2))
+            neighbors = torch.permute(neighbors, (1, 0, 3, 2))
+            print("history.shape :", history.shape)
+            print("future.shape :", future.shape)
+            print("lanes.shape :", lanes.shape)
+            print("neighbors.shape :", neighbors.shape)
+
+            exit()
 
             # Forward pass
             if config['args_r']['use_maneuvers']:
-                fut_pred, lat_pred, lon_pred = net(hist, nbrs, mask, lat_enc, lon_enc)
+                fut_pred = net(history, lanes, neighbors)
                 # Pre-train with MSE loss to speed up training
                 if epoch_num < pretrainEpochs:
                     l = maskedMSE(fut_pred, fut, op_mask)
