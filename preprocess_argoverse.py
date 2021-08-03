@@ -626,34 +626,48 @@ cache = SqliteDict('/var/tmp/cache.db')
 
 
 def get_items():
-    for item in cache.values():
-        """dict(
-            history=local_history,
-            future=local_future,
-            neighbors=local_neighbors,
-            lanes=local_lanes,
-            neighbors_indices=neighbors_indices,
-            distances=distances,
-            stationary=stationary,
-            presences=presences,
-            reference_lane_index=m,
-            reference_lane_coordinates=n,
-            local_lane)"""
-        nu = (lambda j: j + 1)
-        d = (lambda l: sum(min(np.linalg.norm(c - m) for m in l) * nu(i) for i, c in enumerate(item['future'])))
-        m, n = min(enumerate(item['lanes']), key=(lambda k: d(k[1])))
-        print([(i, d(j)) for i, j in sorted(enumerate(item['lanes']), key=(lambda k: d(k[1])))])  # m, n
-        plt.plot(*zip(*item['history']))
-        plt.plot(*zip(*item['future']))
-        for lane in item['lanes']:
-            print(lane[0].shape)
-            plt.plot(*zip(*lane[0]))
-        for neighbor in item['neighbors']:
-            neighbor = [i[0] for i in neighbor]
-            plt.plot(*zip(*neighbor))
-        plt.plot(*zip(*item['lanes'][m][0]), '.-r')
-        # exit()
-        plt.show()
+    # TODO: Check dimensions
+    def generate():
+        for item in cache.values():
+            """dict(
+                history=local_history,
+                future=local_future,
+                neighbors=local_neighbors,
+                lanes=local_lanes,
+                neighbors_indices=neighbors_indices,
+                distances=distances,
+                stationary=stationary,
+                presences=presences,
+                reference_lane_index=m,
+                reference_lane_coordinates=n,
+                local_lane)"""
+            history = item['history']
+            future = item['future']
+            neighbors = item['neighbors']
+            lanes = item['lanes']
+            reference_lane = item['reference_lane_index']
+            # TODO: Find them
+            translation = np.array([0.0, 0.0, 0.0])
+            rotation = np.array([0.0, 0.0, 0.0, 0.0])
+            yield history, future, neighbors, lanes, np.array([reference_lane]), translation, rotation
+
+            '''nu = (lambda j: j + 1)
+            d = (lambda l: sum(min(np.linalg.norm(c - m) for m in l) * nu(i) for i, c in enumerate(item['future'])))
+            m, n = min(enumerate(item['lanes']), key=(lambda k: d(k[1])))
+            print([(i, d(j)) for i, j in sorted(enumerate(item['lanes']), key=(lambda k: d(k[1])))])  # m, n
+            plt.plot(*zip(*item['history']))
+            plt.plot(*zip(*item['future']))
+            for lane in item['lanes']:
+                print(lane[0].shape)
+                plt.plot(*zip(*lane[0]))
+            for neighbor in item['neighbors']:
+                neighbor = [i[0] for i in neighbor]
+                plt.plot(*zip(*neighbor))
+            plt.plot(*zip(*item['lanes'][m][0]), '.-r')
+            # exit()
+            plt.show()'''
+
+    return list(generate())
 
 
 def main():

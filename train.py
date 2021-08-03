@@ -7,6 +7,7 @@ from random import shuffle
 
 from matplotlib import pyplot as plt
 
+from preprocess_argoverse import get_items
 from utils import *
 from contextlib import contextmanager
 from datetime import timedelta
@@ -75,7 +76,7 @@ def show_trace(interval, limit=None):
     alarm(interval)
 
 
-def main_loop():
+def main_loop(use_nuscene=False):
     """This will contain everything needed to train the network"""
 
     # We begin with the dataset, as it will
@@ -84,7 +85,10 @@ def main_loop():
     #  use to get all the scenes from all
     #  the maps.
     with do_something('Initializing the DataSet'):
-        tr_set = Dataset()
+        if use_nuscene:
+            tr_set = Dataset()
+        else:
+            tr_set = get_items()
 
     # TODO: Do something like the following, with a
     #  training set, a validation set and a testing
