@@ -4,8 +4,23 @@ ns_args:
   verbose: yes
 
   split: "mini_train"
-  history_duration: 6
-  prediction_duration: 6
-  batch_size: 32
-  lane_amount_of_coordinates: 150
+  history_duration: 5 # tau + 1
+  prediction_duration: 12 # h
+  nb_lane_candidates: 6 # N
 
+  batch_size: 16 # 32
+  lane_amount_of_coordinates: 150
+  forward_lane: 100
+  backward_lane: 30
+  precision_lane: 0.5
+
+  # TODO: Explain those
+  hidden_size: 64
+  nb_columns: 2
+
+
+# LaneNet arguments
+ln_args:
+  use_cuda: no
+  number_of_predictions: 8
+  train_flag: yes
