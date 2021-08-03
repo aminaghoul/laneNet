@@ -207,10 +207,10 @@ class NS(Dataset):
                 # We don't need any padding, as we have assertions before
                 if side == 'past':
                     # We then reverse the array to have the correct order
-                    past_translations = np.array(reversed(coordinates))
+                    past_translations = np.array(list(reversed(coordinates)))
                 else:
                     # Or do nothing if the order is already correct
-                    future_translations = np.array(coordinates)
+                    future_translations = np.array(list(coordinates))
 
             # This will be used to make sure we compare what is comparable, i.e
             #  to make sure that all the coordinates are taken in the same sample,
