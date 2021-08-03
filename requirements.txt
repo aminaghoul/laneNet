@@ -1,0 +1,5 @@
+torch
+pyyaml
+tensorboard
+nuscenes-devkit
+
