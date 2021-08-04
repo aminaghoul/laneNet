@@ -4,7 +4,7 @@ ns_args:
   verbose: yes
 
   split: "mini_train"
-  history_duration: 5 # tau + 1
+  history_duration: 4 # tau
   prediction_duration: 12 # h
   nb_lane_candidates: 6 # N
 
@@ -13,7 +13,7 @@ ns_args:
   forward_lane: 100
   backward_lane: 30
   precision_lane: 0.5
-
+  num_heads: 8
   # TODO: Explain those
   hidden_size: 64
   nb_columns: 2

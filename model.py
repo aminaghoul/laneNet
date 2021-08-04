@@ -1,5 +1,6 @@
 from time import time_ns
 
+import numpy as np
 import torch.nn
 import torch.nn as nn
 import yaml
@@ -25,10 +26,12 @@ class LaneNet(nn.Module):
         self.batch_size = self._ns_config['batch_size']
         self.tau = self._ns_config['history_duration'] - 1
         self.M = (self._ns_config['forward_lane'] + self._ns_config['backward_lane']) // (
-        self._ns_config['precision_lane'])
+            self._ns_config['precision_lane'])
         self.in_size = self._ns_config['nb_columns']
-
+        self.N = self._ns_config['nb_lane_candidates']
         self.hidden_size = self._ns_config['hidden_size']
+        self.h = self._ns_config['prediction_duration']
+        self.num_heads = self._ns_config['num_heads']
 
         # #######################################################################################
         # TODO: Restart and see what we can improve
@@ -54,6 +57,16 @@ class LaneNet(nn.Module):
 
         # Lane attention block (for the moment not implemented)
         # TODO: Implement
+        self._la_fc = [
+            torch.nn.Linear(in_features=1024 * self.N, out_features=512),
+            torch.nn.Linear(in_features=512, out_features=512),
+            torch.nn.Linear(in_features=512, out_features=256),
+            torch.nn.Linear(in_features=256, out_features=256),
+            torch.nn.Linear(in_features=256, out_features=64),
+            torch.nn.Linear(in_features=64, out_features=64),
+            torch.nn.Linear(in_features=64, out_features=self.N),
+        ]
+        self.softmax = torch.nn.Softmax(dim=1)
 
         # Trajectory Generator
         # There are K different FC, each connected to another FC, this
@@ -62,9 +75,8 @@ class LaneNet(nn.Module):
         # Input for those are the concatenation between the output
         #  of the LSTM of Vp and the average (weighted using the
         #  lane attention block) of all the lane's LSTM outputs.
-        self._k: int = ...  # There will be K outputs
         self._mtp_fc_k = list()
-        for i in range(self._k):
+        for i in range(self.k):
             # input size, specification, output size
             # B X 1536,   u512,          B X 512
             # B X 512,    u512,          B X 512
@@ -72,10 +84,13 @@ class LaneNet(nn.Module):
             self._mtp_fc_k.append([
                 torch.nn.Linear(in_features=1536, out_features=512),
                 torch.nn.Linear(in_features=512, out_features=512),
-                torch.nn.Linear(in_features=512, out_features=256),
+                torch.nn.Linear(in_features=512, out_features=256)
             ])
 
-        # TODO: DÉFINIR 7 FC DU LA BLOC
+        self._mtp_fc_shared = [
+            torch.nn.Linear(in_features=256, out_features=256),
+            torch.nn.Linear(in_features=256, out_features=self.h * 2)
+        ]
 
     def forward(self, history, lanes, neighbors):
         # TODO: Implement the following
@@ -112,7 +127,30 @@ class LaneNet(nn.Module):
             eps.append(epsilon_i)
 
         concat = torch.cat(eps, 1)
-        out_la = self.fc7(self.fc6(self.fc5(self.fc4(self.fc3(self.fc2(self.fc1(out)))))))
 
-        return eps
+        # Lane Attention #########
+        out_la = concat
+        for layer in self._la_fc:
+            out_la = layer(out_la)
+        out_la = self.softmax(out_la)
+        # ########################
+
+        total = np.zeros(())
+        for weight, epsilon in zip(out_la, eps):
+            total += weight * epsilon
+
+        final_epsilon = torch.cat([lstm_hist, total])
+
+        lane_predictions = []
+        for layers in self._mtp_fc_k:
+            output = final_epsilon
+            for layer in layers:
+                output = layer(output)
+            lane_predictions.append(output)
+
+        for layer in self._mtp_fc_shared:
+            for index, lane in enumerate(lane_predictions):
+                lane_predictions[index] = layer(lane)
+
+        return lane_predictions
         # trajectories = self.mtp_fc([fc(epsilon) for fc in self.mtp_fcs])
