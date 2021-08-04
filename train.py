@@ -22,12 +22,14 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 batch_size = 32
 tr_set = NS.every_map('config.yml')
 
-#val_set = NS(config['dataroot'], config['val'])
-#ts_set = NS(config['dataroot'],config['test'])
+# val_set = NS(config['dataroot'], config['val'])
+# ts_set = NS(config['dataroot'],config['test'])
 
 tr_dl = DataLoader(tr_set, batch_size=batch_size, shuffle=False, num_workers=8)
-#val_dl = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=8)
-#ts_dl = DataLoader(ts_set, batch_size=batch_size, shuffle=False, num_workers=8)
+
+
+# val_dl = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=8)
+# ts_dl = DataLoader(ts_set, batch_size=batch_size, shuffle=False, num_workers=8)
 
 class SuperNS(Dataset):
     def __init__(self):
@@ -47,11 +49,8 @@ if __name__ == '__main__':
     tr_dl = DataLoader(tr_set, batch_size=batch_size, shuffle=False, num_workers=8)
     print(len(next(iter(tr_dl))))
 
-
-
     # Initialize Models:
     net = LaneNet('config.yml').float().to(device)
-
 
     # Initialize Optimizer:
     num_epochs = 25
