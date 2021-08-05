@@ -356,10 +356,8 @@ class NS(Dataset):
 
             def get_full_lanes(past_timeline: List[str], instance_token: str) -> List[np.ndarray]:
                 """
-
                 :param past_timeline: A list of sample tokens to be used to retrieve all of the coordinates.
                 :param instance_token: The token used to define the agent that we want to follow
-
                 :return:
                 """
 
@@ -649,7 +647,6 @@ class NS(Dataset):
                 __x = [j['translation'][0] for j in current_agent_past_attributes]
                 __y = [j['translation'][1] for j in current_agent_past_attributes]
                 matplotlib.pyplot.plot(list(__x), list(__y))
-
                 matplotlib.pyplot.show()
                 return False"""
 
