@@ -22,6 +22,7 @@ from nuscenes import NuScenes
 # TODO: Use this or delete this
 IS_ON_LANE = 1
 
+
 # set of N lanes candidates
 # #############################################
 def is_neighbor(reference, item_attrs, radius=10) -> bool:
@@ -108,14 +109,14 @@ class NS(Dataset):
         self._token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
         try:
             # raise FileNotFoundError
-            with open('/dev/shm/cached_v4_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v5_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'rb') as f:
-                self._history, self._future, self._lanes, self._neighbors , self._reference_lane = pickle.load(f)
+                self._history, self._future, self._lanes, self._neighbors, self._reference_lanes = pickle.load(f)
         except FileNotFoundError:
-            self._history, self._future, self._lanes, self._neighbors,  self._reference_lane = self._load()
-            content = pickle.dumps([self._history, self._future, self._lanes, self._neighbors,  self._reference_lane])
-            with open('/dev/shm/cached_v4_%s_%s_%d_%d_agents.bin' % (
+            self._history, self._future, self._lanes, self._neighbors, self._reference_lanes = self._load()
+            content = pickle.dumps([self._history, self._future, self._lanes, self._neighbors, self._reference_lanes])
+            with open('/dev/shm/cached_v5_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'wb') as f:
                 f.write(content)
@@ -549,6 +550,7 @@ class NS(Dataset):
             grand_lanes.append(lanes_coordinates)
 
         new_history, new_future, new_lanes, new_neighbors = [], [], [], []
+        all_reference_lanes = []
 
         for history_row, future_row, lanes_row, neighbors_row in zip(
                 grand_history, grand_future, grand_lanes, grand_neighbors):
@@ -581,6 +583,7 @@ class NS(Dataset):
             if self._n > len(neighbors_row):
                 # Dimension: N, n_coordinates, 2
                 neighbors_row = neighbors_row + [np.zeros((h_d + 1, 5)) for _ in range(self._n - len(neighbors_row))]
+
 
             print('%s possibilities' % len(possibilities))
             for possibility in possibilities:
@@ -617,6 +620,7 @@ class NS(Dataset):
                     ) for l_m in l_n) * nu(i) for i, v_i in enumerate(future_row, 1)))
                 # TODO: Use this
                 reference_lane = min(range(len(distances)), key=distances.__getitem__)
+                all_reference_lanes.append(lanes_coordinates[reference_lane])
 
                 # _, distance_index = min((j, i) for i, j in enumerate(distances))
 
@@ -651,7 +655,8 @@ class NS(Dataset):
                 return False"""
 
         # V^(p), V^(f), L^n, V^n, L_ref
-        return new_history, new_future, new_lanes, new_neighbors, reference_lane
+        return new_history, new_future, new_lanes, new_neighbors, list(
+            map(np.array, all_reference_lanes))
 
     def __getitem__(self, item):
         # TODO: Dispose of this
@@ -659,7 +664,7 @@ class NS(Dataset):
         ('Item', item, len(self._history[item]), len(self._future[item]), len(self._lanes[item]),
          len(self._neighbors[item]), (self._history[item]).shape, (self._future[item]).shape,
          (self._lanes[item]).shape,
-         (self._neighbors[item]),self._reference_lane[item])
+         (self._neighbors[item]), self._reference_lane[item])
         return self._history[item], self._future[item], self._lanes[item], self._neighbors[item]
 
     def _get_possibilities(self, starting_lane: str, remaining_size: int, side='outgoing', *previous_lanes):
