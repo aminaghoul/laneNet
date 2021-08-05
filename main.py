@@ -584,7 +584,6 @@ class NS(Dataset):
                 # Dimension: N, n_coordinates, 2
                 neighbors_row = neighbors_row + [np.zeros((h_d + 1, 5)) for _ in range(self._n - len(neighbors_row))]
 
-
             print('%s possibilities' % len(possibilities))
             for possibility in possibilities:
                 lanes_coordinates: List[Any] = [None] * len(lanes_row)
@@ -664,8 +663,11 @@ class NS(Dataset):
         ('Item', item, len(self._history[item]), len(self._future[item]), len(self._lanes[item]),
          len(self._neighbors[item]), (self._history[item]).shape, (self._future[item]).shape,
          (self._lanes[item]).shape,
-         (self._neighbors[item]), self._reference_lane[item])
-        return self._history[item], self._future[item], self._lanes[item], self._neighbors[item]
+         (self._neighbors[item]), self._reference_lanes[item])
+        return \
+            self._history[item], self._future[item], \
+            self._lanes[item], self._neighbors[item], \
+            self._reference_lanes[item]
 
     def _get_possibilities(self, starting_lane: str, remaining_size: int, side='outgoing', *previous_lanes):
         # TODO: See if we can do something about the case in which we get not roads
