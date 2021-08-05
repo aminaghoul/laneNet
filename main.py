@@ -22,14 +22,10 @@ from nuscenes import NuScenes
 # TODO: Use this or delete this
 IS_ON_LANE = 1
 
-
 # set of N lanes candidates
-
-
 # #############################################
 def is_neighbor(reference, item_attrs, radius=10) -> bool:
     """
-
     :param reference:
     :param item_attrs:
     :param radius: In meters.
@@ -83,6 +79,7 @@ class NS(Dataset):
                 yield NS(config_path, map_name)
 
     def __init__(self, config_path, map_name):
+
         with open(config_path, 'r') as yaml_file:
             self._config = yaml.safe_load(yaml_file)['ns_args']
 
@@ -93,7 +90,7 @@ class NS(Dataset):
 
         # Useful objects
         self._ns = NuScenes(version, dataroot=data_root, verbose=verbose)
-        self._helper = PredictHelper(self._ns)
+        self.helper = self._helper = PredictHelper(self._ns)
 
         #
         self._n = self._config['nb_lane_candidates']
@@ -111,17 +108,21 @@ class NS(Dataset):
         self._token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
         try:
             # raise FileNotFoundError
-            with open('/dev/shm/cached_v2_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v4_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'rb') as f:
-                self._history, self._future, self._lanes, self._neighbors = pickle.load(f)
+                self._history, self._future, self._lanes, self._neighbors , self._reference_lane = pickle.load(f)
         except FileNotFoundError:
-            self._history, self._future, self._lanes, self._neighbors = self._load()
-            content = pickle.dumps([self._history, self._future, self._lanes, self._neighbors])
-            with open('/dev/shm/cached_v2_%s_%s_%d_%d_agents.bin' % (
+            self._history, self._future, self._lanes, self._neighbors,  self._reference_lane = self._load()
+            content = pickle.dumps([self._history, self._future, self._lanes, self._neighbors,  self._reference_lane])
+            with open('/dev/shm/cached_v4_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'wb') as f:
                 f.write(content)
+
+        self._history = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._history]
+        self._future = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._future]
+        self._neighbors = [np.array([[[x, y] for x, y, _, __, ___ in n] for n in sim]) for sim in self._neighbors]
 
     def __len__(self):
         # TODO: Remove this
@@ -140,7 +141,7 @@ class NS(Dataset):
 
         # Choice of the agent: take the one with the most available samples
         try:
-            agents = open('/dev/shm/cached_agent_v2_%s_%s_%d_%d_agents.bin' % (
+            agents = open('/dev/shm/cached_agent_v4_%s_%s_%d_%d_agents.bin' % (
                 self._map_name, self._config['split'], h_d, p_d
             ), 'r').read().strip().split(',')
         except FileNotFoundError:
@@ -151,7 +152,7 @@ class NS(Dataset):
                 if nusc_map.get_closest_lane(*attributes['translation'][:2], 3):
                     availability[attributes['instance_token']] += 1
             agents = list(filter((lambda x: availability.get(x, -1) > (h_d + p_d + 1)), instances))
-            open('/dev/shm/cached_agent_v2_%s_%s_%d_%d_agents.bin' % (
+            open('/dev/shm/cached_agent_v4_%s_%s_%d_%d_agents.bin' % (
                 self._map_name, self._config['split'], h_d, p_d
             ), 'w').write(','.join(agents))
 
@@ -502,7 +503,6 @@ class NS(Dataset):
 
                 # This will hold the list of all the possible itineraries
                 final_list = []
-
                 # We consider the past timeline to be a list of possibilities, so
                 #  we can have a single bit of code treating every cases.
                 for possible_past_timeline in current_agent_past_lanes:
@@ -616,7 +616,7 @@ class NS(Dataset):
                         np.array([v_i[:2], l_m[:2]]),
                     ) for l_m in l_n) * nu(i) for i, v_i in enumerate(future_row, 1)))
                 # TODO: Use this
-                min(range(len(distances)), key=distances.__getitem__)
+                reference_lane = min(range(len(distances)), key=distances.__getitem__)
 
                 # _, distance_index = min((j, i) for i, j in enumerate(distances))
 
@@ -650,8 +650,8 @@ class NS(Dataset):
                 matplotlib.pyplot.show()
                 return False"""
 
-        # V^(p), V^(f), L^n, V^n
-        return new_history, new_future, new_lanes, new_neighbors
+        # V^(p), V^(f), L^n, V^n, L_ref
+        return new_history, new_future, new_lanes, new_neighbors, reference_lane
 
     def __getitem__(self, item):
         # TODO: Dispose of this
@@ -659,7 +659,7 @@ class NS(Dataset):
         ('Item', item, len(self._history[item]), len(self._future[item]), len(self._lanes[item]),
          len(self._neighbors[item]), (self._history[item]).shape, (self._future[item]).shape,
          (self._lanes[item]).shape,
-         (self._neighbors[item]),)
+         (self._neighbors[item]),self._reference_lane[item])
         return self._history[item], self._future[item], self._lanes[item], self._neighbors[item]
 
     def _get_possibilities(self, starting_lane: str, remaining_size: int, side='outgoing', *previous_lanes):
