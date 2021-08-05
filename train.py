@@ -296,12 +296,10 @@ if __name__ == '__main__':
     writer.close()
 
 
-    def test():
+    def test(fut_pred, lane_reference, alpha, beta):
         # Note: the variables v and v_hat depends on the index t,
         #  therefore in the following they will be referred to as
         #  v[t] and v_hat[t], and will contain a list of M coordinates.
-        fut_pred: list = ...
-        lane_reference: list = ...
 
         # . is the amount of coordinates in the future
 
@@ -316,9 +314,6 @@ if __name__ == '__main__':
         K: int = v_hat[0].shape[0]
         # Any variable should be okay
         B: int = len(fut_pred)
-
-        alpha: float = ...
-        beta: float = ...
 
         def get_smooth_l1_loss(first_parameter, second_parameter):
             raise NotImplementedError()
