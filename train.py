@@ -82,11 +82,13 @@ if __name__ == '__main__':
         xc, yc = xa - xb, ya - yb
         return np.sqrt(xc * xc + yc * yc)
 
+
     def l(V_hat, V, L_ref):
         if dist(V_hat, L_ref) > dist(V, L_ref):
             return dist(V_hat, L_ref)
         else:
             return 0
+
 
     # Parameters
     K = config['number_of_predictions']
@@ -157,8 +159,6 @@ if __name__ == '__main__':
             print("fut_pred.shape :", fut_pred.shape)
             # Loss
 
-
-
             # Reshape future
             future = torch.flatten(future, start_dim=1)
             lpred = 0
@@ -173,11 +173,7 @@ if __name__ == '__main__':
                         print(pred_k[index])
                         print(b[index])
                         exit()
-                        Llane_off += l(pred_k[i], b[i],lane_ref)
-
-
-
-
+                        Llane_off += l(pred_k[i], b[i], lane_ref)
 
             print("future.shape :", future.shape)
 
@@ -296,3 +292,46 @@ if __name__ == '__main__':
     print('Results for K=5: \n' + str(results5))
     # Close tensorboard writer
     writer.close()
+
+
+    def test():
+        # Note: the variables v and v_hat depends on the index t,
+        #  therefore in the following they will be referred to as
+        #  v[t] and v_hat[t], and will contain a list of M coordinates.
+        fut_pred: list = ...
+        lane_reference: list = ...
+
+        # . is the amount of coordinates in the future
+
+        # B x M x 2
+        lane_ref = lane_reference
+        # B x K x . x 2
+        v_hat = fut_pred
+        # B x . x 2
+        v = future
+
+        # Any prediction should be okay
+        K: int = v_hat[0].shape[0]
+        # Any variable should be okay
+        B: int = len(fut_pred)
+
+        alpha: float = ...
+        beta: float = ...
+
+        # Defined as a smooth L1 loss between v_hat_f_k and V_f
+        loss_pos_k = ...
+        # Defined as the cross-entropy loss for selecting the reference
+        #  lane from the lane candidates.
+        loss_cls = ...
+
+        # t is defined as the index within the batch
+        # k is defined as the index within the predictions
+
+        def get_loss_lane_off(t, k):
+            return sum(l(v_hat[t][k], v, lane_ref[t])) / h
+
+        def get_loss_pred_t_k(t, k):
+            return beta * loss_pos_k + (1 - beta) * get_loss_lane_off(t, k)
+
+        loss_pred = sum(min(get_loss_pred_t_k(t, k) for k range(K)) for t in range(B))
+        loss_total = alpha * loss_pred + (1 - alpha) * loss_cls
