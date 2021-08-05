@@ -93,6 +93,8 @@ if __name__ == '__main__':
     # Parameters
     K = config['number_of_predictions']
     h = config['prediction_duration']
+    alpha = config['alpha']
+    beta = config['beta']
     # Initialize Models:
     net = LaneNet('config.yml').float().to(device)
 

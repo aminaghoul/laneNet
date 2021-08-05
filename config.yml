@@ -21,6 +21,8 @@ ns_args:
   num_epochs: 20
   log_dir: './results'
   steps_to_log_train_loss: 100
+  alpha: 0.3
+  beta: 0.7
 
 # LaneNet arguments
 ln_args:
