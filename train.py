@@ -318,8 +318,12 @@ if __name__ == '__main__':
         alpha: float = ...
         beta: float = ...
 
+        def get_smooth_l1_loss(first_parameter, second_parameter):
+            raise NotImplementedError()
+
         # Defined as a smooth L1 loss between v_hat_f_k and V_f
-        loss_pos_k = ...
+        def get_loss_pos_t_k(t, k):
+            return get_smooth_l1_loss(v_hat[t][k], v[t][k])
         # Defined as the cross-entropy loss for selecting the reference
         #  lane from the lane candidates.
         loss_cls = ...
@@ -331,7 +335,7 @@ if __name__ == '__main__':
             return sum(l(v_hat[t][k], v, lane_ref[t])) / h
 
         def get_loss_pred_t_k(t, k):
-            return beta * loss_pos_k + (1 - beta) * get_loss_lane_off(t, k)
+            return beta * get_loss_pos_t_k(t, k) + (1 - beta) * get_loss_lane_off(t, k)
 
-        loss_pred = sum(min(get_loss_pred_t_k(t, k) for k range(K)) for t in range(B))
+        loss_pred = sum(min(get_loss_pred_t_k(t, k) for k in range(K)) for t in range(B))
         loss_total = alpha * loss_pred + (1 - alpha) * loss_cls
