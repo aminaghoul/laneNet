@@ -102,9 +102,11 @@ if __name__ == '__main__':
     num_epochs = config['num_epochs']
     optimizer = torch.optim.Adam(net.parameters(), lr=config['lr'])
 
-    # Loss
-    L1Loss = torch.nn.L1Loss()
-    L1Loss = L1Loss.to(device)
+    # L1 Loss
+    L1Loss = torch.nn.L1Loss().to(device)
+
+    # Cross Entropy loss
+    cel = torch.nn.CrossEntropyLoss().to(device)
 
     # Load checkpoint if specified in config:
     start_epoch = 1
@@ -323,7 +325,7 @@ if __name__ == '__main__':
             return get_smooth_l1_loss(v_hat[t][k], v[t][k])
         # Defined as the cross-entropy loss for selecting the reference
         #  lane from the lane candidates.
-        loss_cls = ...
+        loss_cls = cel()
 
         # t is defined as the index within the batch
         # k is defined as the index within the predictions
