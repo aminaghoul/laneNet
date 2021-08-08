@@ -1,13 +1,22 @@
 # from model import ConvLSTM
-
+from contextlib import contextmanager
+from datetime import timedelta
 from inspect import stack
 from itertools import chain
 from signal import signal, SIGALRM, alarm
-from time import sleep
+from time import time
 
 from torch.utils.data import Dataset
 
 from main import NS
+
+
+@contextmanager
+def do_something(what):
+    print(what + '...', end='', flush=True)
+    begin = time()
+    yield
+    print('\r' + what + '...done (in %s)' % timedelta(seconds=time() - begin))
 
 
 class SuperNS(Dataset):
