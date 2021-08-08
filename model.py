@@ -103,12 +103,12 @@ class LaneNet(nn.Module):
         # two cnn layers for history and neighbors
         cnn_hist = self.hist_nbrs_cnn_2((self.hist_nbrs_cnn_1(history)))
         # cnn_hist = [batch_size, 64, tau - 2 ]
-        print(cnn_hist.shape, self.batch_size, self.tau, 64)  # 16, 64, 3
+        # print(cnn_hist.shape, self.batch_size, self.tau, 64)  # 16, 64, 3
         cnn_hist = torch.reshape(cnn_hist, (self.batch_size, self.tau - 2, cnn_hist.shape[1]))
         lstm_hist, _ = self.hist_nbrs_lstm(cnn_hist)
         # lstm_hist = [batch_size, tau - 2, 512]
         lstm_hist = lstm_hist.reshape(self.batch_size, (self.tau - 2) * lstm_hist.shape[2])
-        print("lstm_hist.shape : ", lstm_hist.shape)
+        # print("lstm_hist.shape : ", lstm_hist.shape)
 
         eps = []
         for (nbr, lane) in zip(neighbors, lanes):
@@ -129,12 +129,12 @@ class LaneNet(nn.Module):
             #  3, 3, 260
 
             lstm_nbr = lstm_nbr.reshape(self.batch_size, (self.tau - 2) * lstm_nbr.shape[2])
-            print("lstm_nbr.shape : ", lstm_nbr.shape)
+            # print("lstm_nbr.shape : ", lstm_nbr.shape)
             lstm_lane = lstm_lane.reshape(self.batch_size, self.M * lstm_lane.shape[2])
-            print("lstm_lane.shape : ", lstm_lane.shape)
+            # print("lstm_lane.shape : ", lstm_lane.shape)
             out = torch.cat((lstm_hist, lstm_lane, lstm_nbr), 1)
             # out = torch.cat((out, lstm_nbr), 1)
-            print("out.shape : ", out.shape)
+            # print("out.shape : ", out.shape)
             epsilon_i = self.fc4(self.fc3(self.fc2(self.fc1(out))))
             eps.append(epsilon_i)
 
@@ -146,7 +146,7 @@ class LaneNet(nn.Module):
             out_la = layer(out_la)
         out_la = self.softmax(out_la)
         # ########################
-        print('outlashape : ', out_la.shape)
+        # print('outlashape : ', out_la.shape)
         total = np.zeros(eps[0].shape)
 
         for weights, epsilons in zip(out_la.permute(1, 0), eps):  # For each n in N
@@ -158,10 +158,10 @@ class LaneNet(nn.Module):
                 n_total[index] = torch.mul(epsilon, weight).detach().numpy()
             total += n_total
 
-        print(torch.tensor(total).shape, lstm_hist.shape)
+        # print(torch.tensor(total).shape, lstm_hist.shape)
         final_epsilon = torch.cat([lstm_hist, torch.tensor(total)],1).float()
 
-        print("final eps : ", final_epsilon.shape)
+        # print("final eps : ", final_epsilon.shape)
 
         lane_predictions = []
         for i, layers in enumerate(self._mtp_fc_k):
