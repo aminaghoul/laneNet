@@ -54,11 +54,11 @@ def distance_lane(reference_map, reference, lane):
 
 class NS(Dataset):
     @classmethod
-    def every_map(cls, config_path, multi_thread=False):
+    def every_map(cls, config_path, split="mini_train", multi_thread=False):
         # TODO: Test the method with multi_thread on
         def worker(_map_name: str):
             try:
-                output.put((None, NS(config_path, _map_name)))
+                output.put((None, NS(config_path, _map_name, split)))
             except BaseException as exception:
                 output.put((exception, None))
 
@@ -77,18 +77,19 @@ class NS(Dataset):
                 yield result
         else:
             for map_name in locations:
-                yield NS(config_path, map_name)
+                yield NS(config_path, map_name, split)
 
     def __repr__(self):
         return 'NS(%r, %r)' % (
             self._config_path,
             self._map_name)
 
-    def __init__(self, config_path, map_name):
+    def __init__(self, config_path, map_name, split):
         self._config_path = config_path
 
         with open(config_path, 'r') as yaml_file:
             self._config = yaml.safe_load(yaml_file)['ns_args']
+            self._config['split'] = split
 
         self._map_name = map_name
 

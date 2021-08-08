@@ -3,12 +3,11 @@ ns_args:
   version: 'v1.0-mini'
   verbose: yes
 
-  split: "mini_train"
   history_duration: 4 # tau
   prediction_duration: 12 # h
   nb_lane_candidates: 6 # N
   number_of_predictions: 8 # K
-  batch_size: 16 # 32
+  batch_size: 32 # 32
   lane_amount_of_coordinates: 150
   forward_lane: 100
   backward_lane: 30

@@ -32,16 +32,15 @@ def do_something(what):
 class SuperNS(Dataset):
     # TODO: Add more parameters as well as more
     #  attributes to this.
-    def __init__(self):
-        self.__ns = list(NS.every_map('config.yml'))
+    def __init__(self, split='mini_train'):
+        self.__ns = list(NS.every_map('config.yml', split))
         self.__items = list(chain.from_iterable(self.__ns))
         self.helper = self.__ns[0].helper
 
     def __len__(self):
         # This is the list of every element of
         #  every datasets
-        # Note: 16 refers to the batch size
-        return min(16, len(self.__items))
+        return len(self.__items)
 
     def __getitem__(self, item):
         # This is the list of every element of
@@ -71,7 +70,11 @@ def show_trace(interval, limit=None):
 
 # TODO: Cache the results of the loss function
 
-def get_loss(*, v_hat, reference_lane, alpha, beta, v, h, cel: torch.nn.CrossEntropyLoss, l1_loss: torch.nn.L1Loss):
+def get_loss(
+        v_hat, reference_lane, alpha, beta, v,
+        h, cel: torch.nn.CrossEntropyLoss,
+        l1_loss: torch.nn.L1Loss,
+        all_lanes):
     # TODO: Make sure we don't detach the wrong thingsAdding h
     # Internal functions
     def dist(point, lane):
@@ -110,11 +113,15 @@ def get_loss(*, v_hat, reference_lane, alpha, beta, v, h, cel: torch.nn.CrossEnt
     # print('v_hat:', v_hat.shape)
     # print('v:', v.shape)
 
-    # . is the amount of coordinates in the future
+    # h is the amount of coordinates in the future
+
+    all_lanes = all_lanes.permute(1, 0, 3, 2)
 
     # lane_ref: B x M x 2
-    # v_hat: B x K x . x 2
-    # v: B x . x 2
+    # v_hat: B x K x h x 2
+    # v: B x h x 2
+    # all_lanes: B x N x M x 2
+    # TODO: See all places where I used reshape instead of permute
 
     # Any prediction should be okay
     K: int = v_hat[0].shape[0]
@@ -143,7 +150,56 @@ def get_loss(*, v_hat, reference_lane, alpha, beta, v, h, cel: torch.nn.CrossEnt
     # print("referencelane : ", reference_lane.shape)
 
     # print("ref_lane_pred : ", ref_lane_pred.shape)
-    # loss_cls = cel(reference_lane, ref_lane_pred)
+
+    # #########################
+    # Begin loss_cls ##########
+    # First step: find the associated lanes for each t, k alongside the
+    #  distance from the reference lane
+    associated_lanes = []
+    distances_to_real = []
+    for t in range(B):
+        associated_lanes_t = []
+        distances_to_real_t = []
+        for k in range(K):
+            distances = []
+            # WARNING: detach
+            future_row = torch.permute(v_hat[t][k].reshape((h, 2)), (1, 0)).detach().numpy()
+            for l_n in all_lanes[t].detach().numpy():
+                nu = (lambda x: x)
+                distance = 0
+                for i, v_i in enumerate(future_row, 1):
+                    _distances = []
+                    for l_m in l_n:
+                        _distances.append(np.linalg.norm(
+                            np.array([v_i[:2], l_m[:2]]),
+                        ))
+                    distance += min(_distances) * nu(i)
+                distances.append(distance)
+                # TODO: Use this
+            associated_lane = min(range(len(distances)), key=distances.__getitem__)
+            associated_lane = all_lanes[associated_lane]
+            associated_lanes_t.append(associated_lane)
+
+            nu = (lambda x: x)
+
+            # we now have to get the distance from the lane to the real one
+            distance_to_real = []
+            for i, (a, b) in enumerate(zip(reference_lane.numpy(), associated_lane.numpy())):
+                # TODO: Is nu useful
+                distance_to_real.append(nu(i) * np.linalg.norm(np.array((a, b))))
+            distances_to_real_t.append(sum(distance_to_real))
+
+        distances_to_real.append(distances_to_real_t)
+        associated_lanes.append(associated_lanes_t)
+
+    # TODO: Make sure we have the same understanding of optimisation,
+    #  which is the minimization of the score
+    # TODO: I'm not sure about that, maybe we should have B x N instead of B x K
+    target = torch.tensor(np.zeros((B,))).long()
+    loss_cls = cel(torch.tensor(np.array(distances_to_real)), target)
+
+    # End loss_cls ############
+    # #########################
 
     # t is defined as the index within the batch
     # k is defined as the index within the predictions
@@ -166,9 +222,9 @@ def get_loss(*, v_hat, reference_lane, alpha, beta, v, h, cel: torch.nn.CrossEnt
         #  does it mess with everything?
         # We reshape them to have the dimension last
         #  so we can easily extract the coordinates
-        v_hat_t_k = v_hat_t_k.reshape((h, 2))
-        v_t = v_t.reshape((h, 2))
-        l_ref_t = l_ref_t.reshape((M, 2))
+        v_hat_t_k = torch.permute(v_hat_t_k.reshape((2, h,)), (1, 0))
+        v_t = torch.permute(v_t.reshape((2, h,)), (1, 0))
+        l_ref_t = torch.permute(l_ref_t.reshape((2, M,)), (1, 0))
         # ############################################
         # We return the sum for all the points.
         return sum(threshold_distance(*i, l_ref_t) for i in zip(v_hat_t_k, v_t)) / h
@@ -177,7 +233,7 @@ def get_loss(*, v_hat, reference_lane, alpha, beta, v, h, cel: torch.nn.CrossEnt
         return beta * get_loss_pos_t_k(t, k) + (1 - beta) * get_loss_lane_off(t, k)
 
     loss_pred = sum(min(get_loss_pred_t_k(t, k) for k in range(K)) for t in tqdm(list(range(B))))
-    return alpha * loss_pred  # + (1 - alpha) * loss_cls
+    return alpha * loss_pred + (1 - alpha) * loss_cls
 
 
 def main_loop():
@@ -189,7 +245,9 @@ def main_loop():
     #  use to get all the scenes from all
     #  the maps.
     with do_something('Initializing the DataSet'):
-        tr_set = SuperNS()
+        tr_set = SuperNS('mini_train')
+        # val_set = SuperNS('mini_eval')
+
     # TODO: Do something like the following, with a
     #  training set, a validation set and a testing
     #  set, for instance having super_ns.val,
@@ -249,9 +307,19 @@ def main_loop():
         cel = torch.nn.CrossEntropyLoss().to(device)
 
     # Load checkpoint if specified in config:
-    start_epoch = 1
-    val_loss = math.inf
-    min_val_loss = math.inf
+    # TODO: Should we start with epoch + 1 ?
+    try:
+        previous_state = torch.load('current_state.bin')
+        start_epoch = previous_state['epoch']
+        val_loss = previous_state['loss']
+        min_val_loss = previous_state['min_val_loss']
+        optimizer.load_state_dict(previous_state['optimizer_state_dict'])
+        net.load_state_dict(previous_state['model_state_dict'])
+
+    except FileNotFoundError:
+        start_epoch = 1
+        val_loss = math.inf
+        min_val_loss = math.inf
 
     print('Initialized')
 
@@ -289,7 +357,8 @@ def main_loop():
             # print("v.shape :", v.shape)
 
             # Then we do a forward pass
-            v_hat = net(history, lanes, neighbors).permute(1, 0, 2)
+            predict = net(history, lanes, neighbors);
+            v_hat = predict.permute(1, 0, 2)
             # print("v_hat.shape :", v_hat.shape)
             # print("referencelane : ", reference_lane.shape)
             # print("lanes.shape :", lanes.shape)
@@ -301,19 +370,69 @@ def main_loop():
                 alpha=alpha,
                 beta=beta,
                 v=v, h=h, cel=cel,
-                l1_loss=l1_loss
+                l1_loss=l1_loss,
+                all_lanes=lanes
                 # ref_lane_pred=ref_lane_pred
             )
             print('Loss:', loss_total)
 
             # TODO: These
             # Copied from the old main
-            # optimizer.zero_grad()
-            # loss.backward()
+            optimizer.zero_grad()
+            loss_total.backward()
             # torch.autograd.backward(r, svf_diff)
             # a = torch.nn.utils.clip_grad_norm_(net.parameters(), 10)
-            # optimizer.step()
+            optimizer.step()
+
+            # results5 = compute_metrics(pred_K[5], tr_set.helper, pred_config)
+            # print('Results for K=5: \n' + str(results5))
+            # Close tensorboard writer
+
+            # Any prediction should be okay
+            K: int = v_hat[0].shape[0]
+            # Any variable should be okay
+            B: int = len(v_hat)
+
+            reshaped_v = reshape_v(v, h)
+            reshaped_v_hat = reshape_v_hat(v_hat, h).detach().numpy()
+
+            def e(t, i, k):
+                x_a, y_a = reshaped_v[t][i]
+                x_b, y_b = reshaped_v_hat[t][k][i]
+                return np.sqrt(
+                    (x_a - x_b) ** 2 +
+                    (y_a - y_b) ** 2)
+
+            def ade_t(t):
+                return (min(sum(e(t, i, k) for i in range(h)) for k in range(K))) / h
+
+            def fde_t(t):
+                return (min(e(t, h - 1, k) for k in range(K))) / h
+
+            print("ADE", sum(map(ade_t, range(B))) / B)
+            print("FDE", sum(map(fde_t, range(B))) / B)
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': net.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'loss': val_loss,
+            'min_val_loss': min(val_loss, min_val_loss)
+        }, 'current_state.bin')
+
+
+# TODO: See where I used to reshape and better reshape
+def reshape_v(v, h):
+    return torch.permute(
+        v.reshape((v.shape[0], 2, h)),
+        (0, 2, 1))
+
+
+def reshape_v_hat(v, h):
+    return torch.permute(
+        v.reshape((v.shape[0], v.shape[1], 2, h)),
+        (0, 1, 3, 2))
 
 
 if __name__ == '__main__':
+    show_trace(60, 1)
     main_loop()
