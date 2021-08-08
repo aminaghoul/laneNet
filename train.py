@@ -286,7 +286,23 @@ def main_loop():
     writer = SummaryWriter(log_dir=config['log_dir'])
 
     print('Initializing the data loader...', end='', flush=True)
-    tr_dl = DataLoader(tr_set, batch_size=batch_size, shuffle=False, num_workers=8)
+
+    def collate_fn(batch):
+        """Append zeroes when the batch is too small"""
+
+        def iterate():
+            # If the batch is the correct size, continue
+            if len(batch) != batch_size:
+                # Otherwise start with determining the filler size and the shapes
+                shapes, tail = [row.shape for row in batch[0]], batch_size - len(batch)
+                # Then generate as many filler rows as I should to get the correct batch size
+                batch.extend([tuple(np.zeros(shape) for shape in shapes) for _ in range(tail)])
+            for index in range(len(batch[0])):
+                yield torch.tensor(np.array([row[index] for row in batch]))
+
+        return list(iterate())
+
+    tr_dl = DataLoader(tr_set, batch_size=batch_size, shuffle=False, num_workers=8, collate_fn=collate_fn)
     print('done')
     # TODO: Do as said near the definition of tr_set
     # val_dl = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=8)
