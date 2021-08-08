@@ -79,7 +79,13 @@ class NS(Dataset):
             for map_name in locations:
                 yield NS(config_path, map_name)
 
+    def __repr__(self):
+        return 'NS(%r, %r)' % (
+            self._config_path,
+            self._map_name)
+
     def __init__(self, config_path, map_name):
+        self._config_path = config_path
 
         with open(config_path, 'r') as yaml_file:
             self._config = yaml.safe_load(yaml_file)['ns_args']
