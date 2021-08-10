@@ -112,7 +112,7 @@ class LaneNet(nn.Module):
         # lstm_hist = [batch_size, tau - 2, 512]
         lstm_hist = self.dropout(lstm_hist)
         #lstm_hist = torch.flatten(lstm_hist, start_dim=1) # self.batch_size, (self.tau - 2) * lstm_hist.shape[2])
-        lstm_hist = lstm_hist[:, -1, :]
+        lstm_hist = lstm_hist[:, -1, :]  # use the last hidden state of LSTM
 
         eps = []
         for (nbr, lane) in zip(neighbors, lanes):
