@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn
 import torch.nn as nn
 import yaml
-
+import torch.nn.functional as F
 
 class LaneNet(nn.Module):
 
@@ -21,7 +21,7 @@ class LaneNet(nn.Module):
 
         # Flag for train mode (True) vs test-mode (False)
         self.train_flag = self._config['train_flag']
-
+        self.drop = self._config['dropout']
         self.k = self._config['number_of_predictions']
         self.batch_size = self._ns_config['batch_size']
         self.tau = self._ns_config['history_duration'] + 1
@@ -33,31 +33,33 @@ class LaneNet(nn.Module):
         self.h = self._ns_config['prediction_duration']
         self.num_heads = self._ns_config['num_heads']
 
+        self.nb_coordinates = self._ns_config['nb_coordinates']
+
         # #######################################################################################
         # TODO: Restart and see what we can improve
         # TODO: Is there a way to do this graphically/automatically based on the data we provide?
-
-        self.hist_nbrs_cnn_1 = torch.nn.Conv1d(in_channels=2, out_channels=32, kernel_size=2, stride=1, padding=0)
-        self.hist_nbrs_cnn_2 = torch.nn.Conv1d(in_channels=32, out_channels=32, kernel_size=2, stride=1, padding=0)
-        self.hist_nbrs_lstm = torch.nn.LSTM(input_size=32, hidden_size=64, num_layers=1, bidirectional=False,
+        self.dropout = torch.nn.Dropout(self.drop)
+        self.hist_nbrs_cnn_1 = torch.nn.Conv1d(in_channels=self.nb_coordinates, out_channels=64, kernel_size=2, stride=1, padding=0)
+        self.batchnorm1 = torch.nn.BatchNorm1d(64)
+        self.hist_nbrs_cnn_2 = torch.nn.Conv1d(in_channels=64, out_channels=64, kernel_size=2, stride=1, padding=0)
+        self.hist_nbrs_lstm = torch.nn.GRU(input_size=64, hidden_size=512, num_layers=1, bidirectional=False,
                                             batch_first=True)
 
-        self.lanes_cnn1 = torch.nn.Conv1d(in_channels=2, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.lanes_cnn2 = torch.nn.Conv1d(in_channels=32, out_channels=32, kernel_size=3, stride=1, padding=1)
-        self.lanes_cnn3 = torch.nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1)
-        self.lanes_cnn4 = torch.nn.Conv1d(in_channels=64, out_channels=96, kernel_size=3, stride=1, padding=1)
+        self.lanes_cnn1 = torch.nn.Conv1d(in_channels=2, out_channels=64, kernel_size=3, stride=1, padding=1)
+        self.lanes_cnn2 = torch.nn.Conv1d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=1)
+        self.lanes_cnn3 = torch.nn.Conv1d(in_channels=64, out_channels=96, kernel_size=3, stride=1, padding=1)
+        self.lanes_cnn4 = torch.nn.Conv1d(in_channels=96, out_channels=96, kernel_size=3, stride=1, padding=1)
 
         # 96, 2018
-        self.lanes_lstm = torch.nn.LSTM(input_size=96, hidden_size=512, num_layers=1, bidirectional=False,
+        self.lanes_lstm = torch.nn.GRU(input_size=96, hidden_size=2048, num_layers=1, bidirectional=False,
                                         batch_first=True)
 
-        self.fc1 = torch.nn.Linear(in_features=133504, out_features=2048)
+        self.fc1 = torch.nn.Linear(in_features=3072, out_features=2048)
         self.fc2 = torch.nn.Linear(in_features=2048, out_features=2048)
         self.fc3 = torch.nn.Linear(in_features=2048, out_features=1024)
         self.fc4 = torch.nn.Linear(in_features=1024, out_features=1024)
 
         # Lane attention block (for the moment not implemented)
-        # TODO: Implement
         self._la_fc = [
             torch.nn.Linear(in_features=1024 * self.N, out_features=512),
             torch.nn.Linear(in_features=512, out_features=512),
@@ -83,14 +85,14 @@ class LaneNet(nn.Module):
             # B X 512,    u512,          B X 512
             # B X 512,    u256,          B X 256
             self._mtp_fc_k.append([
-                torch.nn.Linear(in_features=1216, out_features=512),
+                torch.nn.Linear(in_features=1536, out_features=512),
                 torch.nn.Linear(in_features=512, out_features=512),
                 torch.nn.Linear(in_features=512, out_features=256)
             ])
 
         self._mtp_fc_shared = [
             torch.nn.Linear(in_features=256, out_features=256),
-            torch.nn.Linear(in_features=256, out_features=self.h * 2)
+            torch.nn.Linear(in_features=256, out_features=self.h * self.nb_coordinates)
         ]
 
     def forward(self, history, lanes, neighbors):
@@ -101,42 +103,44 @@ class LaneNet(nn.Module):
         # history = [batch_size, 2, tau]
 
         # two cnn layers for history and neighbors
-        cnn_hist = self.hist_nbrs_cnn_2((self.hist_nbrs_cnn_1(history)))
+        cnn_hist = self.hist_nbrs_cnn_2(self.batchnorm1(self.hist_nbrs_cnn_1(history)))
+        cnn_hist = F.relu(cnn_hist)
         # cnn_hist = [batch_size, 64, tau - 2 ]
-        # print(cnn_hist.shape, self.batch_size, self.tau, 64)  # 16, 64, 3
-        cnn_hist = torch.reshape(cnn_hist, (self.batch_size, self.tau - 2, cnn_hist.shape[1]))
+        cnn_hist = cnn_hist.permute(0, 2, 1)
         lstm_hist, _ = self.hist_nbrs_lstm(cnn_hist)
+
         # lstm_hist = [batch_size, tau - 2, 512]
-        lstm_hist = lstm_hist.reshape(self.batch_size, (self.tau - 2) * lstm_hist.shape[2])
-        # print("lstm_hist.shape : ", lstm_hist.shape)
+        lstm_hist = self.dropout(lstm_hist)
+        #lstm_hist = torch.flatten(lstm_hist, start_dim=1) # self.batch_size, (self.tau - 2) * lstm_hist.shape[2])
+        lstm_hist = lstm_hist[:, -1, :]
 
         eps = []
         for (nbr, lane) in zip(neighbors, lanes):
             # nbr = [batch_size, 2, tau]
-            cnn_nbr = self.hist_nbrs_cnn_2((self.hist_nbrs_cnn_1(nbr)))
+            cnn_nbr = self.hist_nbrs_cnn_2(self.batchnorm1(self.hist_nbrs_cnn_1(nbr)))
             # cnn_nbr = [batch_size, 64, tau - 2]
-            cnn_nbr = torch.reshape(cnn_nbr, (self.batch_size, self.tau - 2, cnn_nbr.shape[1]))
+            cnn_nbr = cnn_nbr.permute(0, 2, 1)
             lstm_nbr, _ = self.hist_nbrs_lstm(cnn_nbr)
             # lstm_nbr = [batch_size, tau, 512]
             # lane = [batch_size, 2, M]
             cnn_lane = self.lanes_cnn4(self.lanes_cnn3(self.lanes_cnn2(self.lanes_cnn1(lane))))
             # cnn_lane = [batch_size, 64, M]
-            cnn_lane = torch.reshape(cnn_lane, (self.batch_size, self.M, cnn_lane.shape[1]))
+            cnn_lane = cnn_lane.permute(0, 2, 1)
             lstm_lane, _ = self.lanes_lstm(cnn_lane)
             # lstm_lane = [batch_size, M, 2048]
 
             # concat
             #  3, 3, 260
 
-            lstm_nbr = lstm_nbr.reshape(self.batch_size, (self.tau - 2) * lstm_nbr.shape[2])
+            lstm_nbr = lstm_nbr[:, -1, :]
             # print("lstm_nbr.shape : ", lstm_nbr.shape)
-            lstm_lane = lstm_lane.reshape(self.batch_size, self.M * lstm_lane.shape[2])
+            lstm_lane = lstm_lane[:, -1, :]
             # print("lstm_lane.shape : ", lstm_lane.shape)
             out = torch.cat((lstm_hist, lstm_lane, lstm_nbr), 1)
             # out = torch.cat((out, lstm_nbr), 1)
             # print("out.shape : ", out.shape)
             epsilon_i = self.fc4(self.fc3(self.fc2(self.fc1(out))))
-            eps.append(epsilon_i)
+            eps.append(F.relu(epsilon_i))
 
         concat = torch.cat(eps, 1)
 
@@ -159,9 +163,10 @@ class LaneNet(nn.Module):
             total += n_total
 
         # print(torch.tensor(total).shape, lstm_hist.shape)
-        final_epsilon = torch.cat([lstm_hist, torch.tensor(total)],1).float()
+        final_epsilon = torch.cat([lstm_hist, torch.tensor(total)], 1).float()
 
-        # print("final eps : ", final_epsilon.shape)
+        print("final eps : ", final_epsilon.shape)
+
 
         lane_predictions = []
         for i, layers in enumerate(self._mtp_fc_k):
