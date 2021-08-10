@@ -81,7 +81,6 @@ def main_loop():
     #  the maps.
     with do_something('Initializing the DataSet'):
         tr_set = SuperNS('mini_train')
-        val_set = SuperNS('mini_val')
 
     # TODO: Do something like the following, with a
     #  training set, a validation set and a testing
@@ -121,16 +120,8 @@ def main_loop():
     writer = SummaryWriter(log_dir=config['log_dir'])
 
     print('Initializing the data loader...', end='', flush=True)
-    n = 2 * len(tr_set) //3
-    tr_se = tr_set[0:n]
-    tr_dl = DataLoader(tr_se, batch_size=batch_size, shuffle=False, num_workers=8, collate_fn=collate_fn)
+    tr_dl = DataLoader(tr_set, batch_size=batch_size, shuffle=False, num_workers=8, collate_fn=collate_fn)
     print('done')
-
-    # TODO: Do as said near the definition of tr_set
-    val_set = tr_set[n+1:]
-    val_dl = DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=8, collate_fn=collate_fn)
-
-    # ts_dl = DataLoader(ts_set, batch_size=batch_size, shuffle=False, num_workers=8)
 
     # Initialize Models:
     print('Initializing models...', end='', flush=True)
