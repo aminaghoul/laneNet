@@ -25,6 +25,7 @@ with open(config_file, 'r') as yaml_file:
 
 batch_size = config['batch_size']
 
+
 # Loss function
 def dist(point, lane):
     """the distance from the point `point` to the lane `lane`"""
@@ -56,11 +57,17 @@ def threshold_distance(v_hat_t_k_i, v_t_i, l_ref_t):
     else:
         return 0
 
-def get_loss(v_hat, reference_lane, alpha, beta, v, h, all_lanes, device):
+
+def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel, l1_loss, out_la):
     # TODO: Make sure we don't detach the wrong thingsAdding h
     # Internal functions
 
+    all_lanes = all_lanes.permute(1, 0, 3, 2)
 
+    reference_lane = []
+    for index, reference_index in enumerate(reference_indices):
+        reference_lane.append(all_lanes[index][reference_index])
+    reference_lane = torch.stack(reference_lane)
     # Note: the variables v and v_hat depends on the index t,
     #  therefore in the following they will be referred to as
     #  v[t] and v_hat[t], and will contain a list of M coordinates.
@@ -69,11 +76,6 @@ def get_loss(v_hat, reference_lane, alpha, beta, v, h, all_lanes, device):
     print('v:', v.shape)
     print('all_lanes : ', all_lanes.shape)
     print("ref_lane : ", reference_lane.shape)
-
-    # h is the amount of coordinates in the future
-    l1_loss = torch.nn.L1Loss().to(device)
-    cel = torch.nn.SmoothL1Loss().to(device) #torch.nn.CrossEntropyLoss().to(device)
-    all_lanes = all_lanes.permute(1, 0, 3, 2)
 
     # lane_ref: B x M x 2
     # v_hat: B x K x h x 2
@@ -86,9 +88,7 @@ def get_loss(v_hat, reference_lane, alpha, beta, v, h, all_lanes, device):
     # Any variable should be okay
     B: int = len(v_hat)
     # The amount of coordinates in a lane
-    M: int = reference_lane.shape[1]
-
-
+    M: int = all_lanes.shape[2]
 
     # Defined as the cross-entropy loss for selecting the reference
     #  lane from the lane candidates.
@@ -97,11 +97,11 @@ def get_loss(v_hat, reference_lane, alpha, beta, v, h, all_lanes, device):
     # print(reference_lane.shape, reference_lane.shape)
 
     # If reference_lane is first
-    target = torch.empty(B, 2, dtype=torch.long).random_(5)
-    # loss_cls = cel(reference_lane, target)
+    # target = torch.empty(B, 2, dtype=torch.long).random_(5)
+    loss_cls = cel(out_la, reference_indices)
 
     # If reference_lane is last
-    target = torch.empty(B, 2, dtype=torch.long).random_(5)
+    # target = torch.empty(B, 2, dtype=torch.long).random_(5)
 
     # print("referencelane : ", reference_lane.shape)
 
@@ -111,61 +111,60 @@ def get_loss(v_hat, reference_lane, alpha, beta, v, h, all_lanes, device):
     # Begin loss_cls ##########
     # First step: find the associated lanes for each t, k alongside the
     #  distance from the reference lane
+    def false():
+        associated_lanes = []
+        distances_to_real = []
+        loss_cls_b = []
+        for t in range(B):
+            associated_lanes_t = []
+            distances_to_real_t = []
+            loss_cls_k = []
+            for k in range(K):
+                distances = []
+                # WARNING: detach
+                future_row = torch.permute(v_hat[t][k].reshape((h, 2)), (1, 0)).detach().numpy()
+                for l_n in all_lanes[t].detach().numpy():
+                    # l_n : M x 2
+                    nu = (lambda x: x)
+                    distance = 0
+                    for i, v_i in enumerate(future_row, 1):
+                        _distances = []
+                        for l_m in l_n:
+                            _distances.append(np.linalg.norm(
+                                np.array([v_i[:2], l_m[:2]]),
+                            ))
+                        distance += min(_distances) * nu(i)
+                    distances.append(distance)
 
-    associated_lanes = []
-    distances_to_real = []
-    loss_cls_b = []
-    for t in range(B):
-        associated_lanes_t = []
-        distances_to_real_t = []
-        loss_cls_k = []
-        for k in range(K):
-            distances = []
-            # WARNING: detach
-            future_row = torch.permute(v_hat[t][k].reshape((h, 2)), (1, 0)).detach().numpy()
-            for l_n in all_lanes[t].detach().numpy():
-                # l_n : M x 2
+                associated_lane = np.argmin(distances)
+                # min(range(len(distances)), key=distances.__getitem__)
+                associated_lane = all_lanes[:, associated_lane]  # B x M x 2
+                loss_cls_k.append(cel(associated_lane, reference_lane))
+
+                """ associated_lanes_t.append(associated_lane)
+    
                 nu = (lambda x: x)
-                distance = 0
-                for i, v_i in enumerate(future_row, 1):
-                    _distances = []
-                    for l_m in l_n:
-                        _distances.append(np.linalg.norm(
-                            np.array([v_i[:2], l_m[:2]]),
-                        ))
-                    distance += min(_distances) * nu(i)
-                distances.append(distance)
+    
+                # we now have to get the distance from the lane to the real one
+                distance_to_real = []
+                for i, (a, b) in enumerate(zip(reference_lane.numpy(), associated_lane.numpy())):
+                    # TODO: Is nu useful
+                    distance_to_real.append(nu(i) * np.linalg.norm(np.array((a, b))))
+                distances_to_real_t.append(sum(distance_to_real))
+            print(len(associated_lanes_t))
+            distances_to_real.append(distances_to_real_t)
+            associated_lanes.append(associated_lanes_t)
+    
+        # TODO: Make sure we have the same understanding of optimisation,
+        #  which is the minimization of the score
+        # TODO: I'm not sure about that, maybe we should have B x N instead of B x K
+            target = torch.tensor(np.zeros((B,))).long()
+        print("associated_lane :", np.array(distances_to_real).shape)
+        print("distances_to_real :", np.array(distances_to_real).shape)
+        print('ref_lane : ', reference_lane.shape)"""
 
-            associated_lane = np.argmin(distances)
-            #min(range(len(distances)), key=distances.__getitem__)
-            associated_lane = all_lanes[:, associated_lane] # B x M x 2
-            loss_cls_k.append(cel(associated_lane, reference_lane))
-
-            """ associated_lanes_t.append(associated_lane)
-
-            nu = (lambda x: x)
-
-            # we now have to get the distance from the lane to the real one
-            distance_to_real = []
-            for i, (a, b) in enumerate(zip(reference_lane.numpy(), associated_lane.numpy())):
-                # TODO: Is nu useful
-                distance_to_real.append(nu(i) * np.linalg.norm(np.array((a, b))))
-            distances_to_real_t.append(sum(distance_to_real))
-        print(len(associated_lanes_t))
-        distances_to_real.append(distances_to_real_t)
-        associated_lanes.append(associated_lanes_t)
-
-    # TODO: Make sure we have the same understanding of optimisation,
-    #  which is the minimization of the score
-    # TODO: I'm not sure about that, maybe we should have B x N instead of B x K
-        target = torch.tensor(np.zeros((B,))).long()
-    print("associated_lane :", np.array(distances_to_real).shape)
-    print("distances_to_real :", np.array(distances_to_real).shape)
-    print('ref_lane : ', reference_lane.shape)"""
-
-        loss_cls_b.append(np.min(loss_cls_k))
-    loss_cls = sum(loss_cls_b)/B
-
+            loss_cls_b.append(np.min(loss_cls_k))
+        loss_cls = sum(loss_cls_b) / B
 
     # End loss_cls ############
     # #########################
@@ -208,8 +207,10 @@ def get_loss(v_hat, reference_lane, alpha, beta, v, h, all_lanes, device):
             loss_pred_k.append(get_loss_pred_t_k(t, k))
         loss_pred_t.append(np.min(loss_pred_k))
 
-    loss_pred = sum(loss_pred_t)/B # sum(min(get_loss_pred_t_k(t, k) for k in range(K)) for t in tqdm(list(range(B))))
-    return alpha * loss_pred + (1 - alpha) * loss_cls
+    loss_pred = sum(
+        loss_pred_t) / B  # sum(min(get_loss_pred_t_k(t, k) for k in range(K)) for t in tqdm(list(range(B))))
+    return (alpha * loss_pred + (1 - alpha) * loss_cls)
+
 
 # Metrics
 def compute_ade(predicted_trajs, gt_traj):
@@ -223,6 +224,7 @@ def compute_ade(predicted_trajs, gt_traj):
 
 def compute_fde(predicted_trajs, gt_traj):
     fde_k = []
+
     for predicted_traj in predicted_trajs:
         final_error = np.linalg.norm(predicted_traj - gt_traj)
         fde_k.append(final_error)
@@ -243,8 +245,10 @@ def metrics(predictions, futures, best_of=True):
 
     return batch_error_dict
 
+
 def collate_fn(batch):
     """Append zeroes when the batch is too small"""
+
     def iterate():
         # If the batch is the correct size, continue
         if len(batch) != batch_size:
@@ -257,13 +261,15 @@ def collate_fn(batch):
 
     return list(iterate())
 
+
 # TODO: See where I used to reshape and better reshape
 def reshape_v(v, h):
     return torch.permute(
-            v.reshape((v.shape[0], 2, h)),
-            (0, 2, 1))
+        v.reshape((v.shape[0], 2, h)),
+        (0, 2, 1))
+
 
 def reshape_v_hat(v, h):
     return torch.permute(
-            v.reshape((v.shape[0], v.shape[1], 2, h)),
-            (0, 1, 3, 2))
+        v.reshape((v.shape[0], v.shape[1], 2, h)),
+        (0, 1, 3, 2))

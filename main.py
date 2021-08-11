@@ -116,14 +116,14 @@ class NS(Dataset):
         self._token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
         try:
             # raise FileNotFoundError
-            with open('/dev/shm/cached_v5_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v6_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'rb') as f:
                 self._history, self._future, self._lanes, self._neighbors, self._reference_lanes = pickle.load(f)
         except FileNotFoundError:
             self._history, self._future, self._lanes, self._neighbors, self._reference_lanes = self._load()
             content = pickle.dumps([self._history, self._future, self._lanes, self._neighbors, self._reference_lanes])
-            with open('/dev/shm/cached_v5_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v6_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'wb') as f:
                 f.write(content)
@@ -131,6 +131,7 @@ class NS(Dataset):
         self._history = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._history]
         self._future = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._future]
         self._neighbors = [np.array([[[x, y] for x, y, _, __, ___ in n] for n in sim]) for sim in self._neighbors]
+
 
     def __len__(self):
         # TODO: Remove this
@@ -624,7 +625,7 @@ class NS(Dataset):
                     ) for l_m in l_n) * nu(i) for i, v_i in enumerate(future_row, 1)))
                 # TODO: Use this
                 reference_lane = min(range(len(distances)), key=distances.__getitem__)
-                all_reference_lanes.append(lanes_coordinates[reference_lane])
+                all_reference_lanes.append(reference_lane)
 
                 # _, distance_index = min((j, i) for i, j in enumerate(distances))
 

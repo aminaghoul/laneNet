@@ -2,6 +2,8 @@
 
 import json
 import math
+import pickle
+from random import shuffle
 
 from matplotlib import pyplot as plt
 
@@ -11,7 +13,7 @@ from datetime import timedelta
 from inspect import stack
 from itertools import chain
 from signal import signal, SIGALRM, alarm
-from time import time
+from time import time, sleep
 
 import numpy as np
 import torch
@@ -39,6 +41,7 @@ class SuperNS(Dataset):
     def __init__(self, split='mini_train'):
         self.__ns = list(NS.every_map('config.yml', split))
         self.__items = list(chain.from_iterable(self.__ns))
+        shuffle(self.__items)
         self.helper = self.__ns[0].helper
 
     def __len__(self):
@@ -71,6 +74,7 @@ def show_trace(interval, limit=None):
     signal(SIGALRM, handler)
     alarm(interval)
 
+
 def main_loop():
     """This will contain everything needed to train the network"""
 
@@ -95,12 +99,12 @@ def main_loop():
         prediction_config_file = 'prediction_cfg.json'
         with open(config_file, 'r') as yaml_file:
             config = yaml.safe_load(yaml_file)['ns_args']
-        with open(prediction_config_file, 'r') as f:
-            pred_config = json.load(f)
-            # TODO: Typo?
+        # with open(prediction_config_file, 'r') as f:
+        #     pred_config = json.load(f)
+        #     # TODO: Typo?
 
-    with do_something('Deserializing configuration'):
-        pred_config = PredictionConfig.deserialize(pred_config, tr_set.helper)
+    # with do_something('Deserializing configuration'):
+    #     pred_config = PredictionConfig.deserialize(pred_config, tr_set.helper)
 
     # We then extract parameters from them
     batch_size = config['batch_size']
@@ -126,13 +130,15 @@ def main_loop():
     # Initialize Models:
     print('Initializing models...', end='', flush=True)
     net = LaneNet('config.yml').float().to(device)
+    l1_loss = torch.nn.L1Loss().to(device)
+    cel = torch.nn.CrossEntropyLoss().to(device)
     print('done')
 
     # Initialize Optimizer:
     print('Initializing the optimizer...', end='', flush=True)
     optimizer = torch.optim.Adam(net.parameters(), lr=config['lr'])
-    #if hyperparams['learning_rate_style'] == 'const':
-    lr_scheduler= torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=1.0)
+    # if hyperparams['learning_rate_style'] == 'const':
+    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=1.0)
     """elif hyperparams['learning_rate_style'] == 'exp':
         lr_scheduler[node_type] = optim.lr_scheduler.ExponentialLR(optimizer[node_type],
                                                                    gamma=hyperparams['learning_decay_rate'])"""
@@ -145,8 +151,8 @@ def main_loop():
             start_epoch = previous_state['epoch']
             val_loss = previous_state['loss']
             min_val_loss = previous_state['min_val_loss']
-            #optimizer.load_state_dict(previous_state['optimizer_state_dict'])
-            #net.load_state_dict(previous_state['model_state_dict'])
+            # optimizer.load_state_dict(previous_state['optimizer_state_dict'])
+            # net.load_state_dict(previous_state['model_state_dict'])
 
         except FileNotFoundError:
             start_epoch = 1
@@ -178,9 +184,9 @@ def main_loop():
         for i, (history, v, lanes, neighbors, reference_lane) in enumerate(tr_dl):
             print('Step ', i, '/', len(tr_dl))
 
-            # history : B x K x 2
+            # history : B x tau x 2
             # lanes : B x N x M x 2
-            # neighbors : B x N x K x 2
+            # neighbors : B x N x tau x 2
             # v : future : B x h x 2
             # reference_lane : B x M x 2
 
@@ -188,14 +194,14 @@ def main_loop():
             history = torch.permute(history.float().to(device), (0, 2, 1))
             lanes = torch.permute(lanes.float().to(device), (1, 0, 3, 2))
             neighbors = torch.permute(neighbors.float().to(device), (1, 0, 3, 2))
-            # history : B x 2 x K
+            # history : B x 2 x tau
             # lanes :  N x B x 2 x M
-            # neighbors :  N x B x 2 x K
+            # neighbors :  N x B x 2 x tau
             v = torch.flatten(torch.permute(v.float().to(device), (0, 2, 1)), start_dim=1)
             # v : future : B x (h x 2)
 
             # Then we do a forward pass
-            predict = net(history, lanes, neighbors)
+            predict, out_la = net(history, lanes, neighbors, reference_lane)
             # predict : K x B x (hx2)
 
             v_hat = predict.permute(1, 0, 2)
@@ -205,12 +211,14 @@ def main_loop():
             optimizer.zero_grad()
             loss_total = get_loss(
                 v_hat=v_hat,
-                reference_lane=reference_lane,
+                reference_indices=reference_lane,
                 alpha=alpha,
                 beta=beta,
                 v=v, h=h,
                 all_lanes=lanes,
-                device=device
+                device=device,
+                l1_loss=l1_loss,
+                cel=cel, out_la=out_la
             )
             loss.append(loss_total)
             print('Loss:', loss_total)
@@ -221,6 +229,35 @@ def main_loop():
 
             # Stepping forward the learning rate scheduler and annealers.
             lr_scheduler.step()
+
+            index = 0
+            try:
+                raise KeyboardInterrupt
+            except KeyboardInterrupt:
+                print(history.shape, neighbors.shape, v.shape, predict.permute(1, 0, 2).shape)
+                for t_history, t_neighbors, t_future, t_predict, t_lanes in zip(
+                        history, neighbors.permute(1, 0, 2, 3),
+                        v, predict.permute(1, 0, 2), lanes.permute(1, 0, 2, 3)):
+                    print(t_lanes.shape)
+                    target_x, target_y = [], []
+                    for x, y, *z in t_history.permute(1, 0):
+                        target_y.append(y)
+                        target_x.append(x)
+                    args = [target_x, target_y, '-']
+                    target_x, target_y = t_future.reshape((2, h))
+                    args.extend([target_x, target_y, '-'])
+                    for t_k_predict in t_predict:
+                        predictions_x, predictions_y = [], []
+                        for x, y, *z in t_k_predict.reshape((h, 2)):
+                            predictions_x.append(y)
+                            predictions_y.append(x)
+                        args.extend((predictions_x, predictions_y, '-'))
+
+                    for x, y in t_lanes:
+                        args.extend([x, y, '-g'])
+
+                    open('/dev/shm/%d.pickle' % index, 'wb').write(pickle.dumps(args))
+                    index += 1
 
             '''
             def e(t, i, k):
@@ -236,21 +273,19 @@ def main_loop():
             def fde_t(t):
                 return (min(e(t, h - 1, k) for k in range(K))) / h'''
 
-
-
             batch_error_dict = metrics(predict.detach().numpy(), v.detach().numpy())
             eval_ade_batch_errors = np.hstack((eval_ade, batch_error_dict['ade']))
             eval_fde_batch_errors = np.hstack((eval_fde, batch_error_dict['fde']))
-            print("ADE", np.min(batch_error_dict['ade'])) # sum(map(ade_t, range(B))) / B)
-            print("FDE", np.min(batch_error_dict['fde'])) #sum(map(fde_t, range(B))) / B)
+            print("ADE", np.min(batch_error_dict['ade']))  # sum(map(ade_t, range(B))) / B)
+            print("FDE", np.min(batch_error_dict['fde']))  # sum(map(fde_t, range(B))) / B)
         torch.save({
             'epoch': epoch,
-            #'model_state_dict': net.state_dict(),
-            #'optimizer_state_dict': optimizer.state_dict(),
+            # 'model_state_dict': net.state_dict(),
+            # 'optimizer_state_dict': optimizer.state_dict(),
             'loss': val_loss,
             'min_val_loss': min(val_loss, min_val_loss),
-            'ade':eval_ade_batch_errors,
-            'fde' :eval_fde_batch_errors
+            'ade': eval_ade_batch_errors,
+            'fde': eval_fde_batch_errors
         }, 'current_state.bin')
 
     plt.plot(eval_ade, label="ADE")
@@ -258,8 +293,6 @@ def main_loop():
     plt.plot(loss, label="loss")
     plt.legend()
     plt.show()
-
-
 
 
 if __name__ == '__main__':

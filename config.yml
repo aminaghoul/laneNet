@@ -7,13 +7,13 @@ ns_args:
   prediction_duration: 12 # h
   nb_lane_candidates: 6 # N
   number_of_predictions: 5 # K
-  batch_size: 16 # 32
+  batch_size: 32 # 32
   lane_amount_of_coordinates: 150
   forward_lane: 100
   backward_lane: 30
   precision_lane: 0.5
   num_heads: 8
-  lr: 0.01
+  lr: 0.001
   nb_coordinates: 2
   # TODO: Explain those
   hidden_size: 64
@@ -21,7 +21,7 @@ ns_args:
   num_epochs: 2
   log_dir: './results'
   steps_to_log_train_loss: 100
-  alpha: 0.2
+  alpha: 0.1
   beta: 0.3
   #split: 'mini_train'
 

@@ -6,6 +6,19 @@ import torch.nn as nn
 import yaml
 import torch.nn.functional as F
 
+import io
+
+_old_open = io.open
+
+
+def _new_open(*args, **kwargs):
+    print('Open', args[0])
+    return _old_open(*args, **kwargs)
+
+
+io.open = _new_open
+
+
 class LaneNet(nn.Module):
 
     # Initialization
@@ -39,11 +52,12 @@ class LaneNet(nn.Module):
         # TODO: Restart and see what we can improve
         # TODO: Is there a way to do this graphically/automatically based on the data we provide?
         self.dropout = torch.nn.Dropout(self.drop)
-        self.hist_nbrs_cnn_1 = torch.nn.Conv1d(in_channels=self.nb_coordinates, out_channels=64, kernel_size=2, stride=1, padding=0)
+        self.hist_nbrs_cnn_1 = torch.nn.Conv1d(in_channels=self.nb_coordinates, out_channels=64, kernel_size=2,
+                                               stride=1, padding=0)
         self.batchnorm1 = torch.nn.BatchNorm1d(64)
         self.hist_nbrs_cnn_2 = torch.nn.Conv1d(in_channels=64, out_channels=64, kernel_size=2, stride=1, padding=0)
         self.hist_nbrs_lstm = torch.nn.GRU(input_size=64, hidden_size=512, num_layers=1, bidirectional=False,
-                                            batch_first=True)
+                                           batch_first=True)
 
         self.lanes_cnn1 = torch.nn.Conv1d(in_channels=2, out_channels=64, kernel_size=3, stride=1, padding=1)
         self.lanes_cnn2 = torch.nn.Conv1d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=1)
@@ -52,7 +66,7 @@ class LaneNet(nn.Module):
 
         # 96, 2018
         self.lanes_lstm = torch.nn.GRU(input_size=96, hidden_size=2048, num_layers=1, bidirectional=False,
-                                        batch_first=True)
+                                       batch_first=True)
 
         self.fc1 = torch.nn.Linear(in_features=3072, out_features=2048)
         self.fc2 = torch.nn.Linear(in_features=2048, out_features=2048)
@@ -95,25 +109,154 @@ class LaneNet(nn.Module):
             torch.nn.Linear(in_features=256, out_features=self.h * self.nb_coordinates)
         ]
 
-    def forward(self, history, lanes, neighbors):
+        self.new = dict(
+            tfe_h_cnn_1=torch.nn.Conv1d(
+                in_channels=self.nb_coordinates,
+                out_channels=64, kernel_size=2,
+                stride=1, padding=0),
+            tfe_h_cnn_2=torch.nn.Conv1d(
+                in_channels=64, out_channels=64,
+                kernel_size=2, stride=1, padding=0),
+            tfe_h_lstm=torch.nn.GRU(
+                input_size=self.tau - 2, hidden_size=512,
+                num_layers=1, bidirectional=False,
+                batch_first=True),
+            tfe_n_cnn_1=torch.nn.Conv1d(
+                in_channels=self.nb_coordinates,
+                out_channels=64, kernel_size=2,
+                stride=1, padding=0),
+            tfe_n_cnn_2=torch.nn.Conv1d(
+                in_channels=64, out_channels=64,
+                kernel_size=2, stride=1, padding=0),
+            tfe_n_lstm=torch.nn.GRU(
+                input_size=self.tau - 2, hidden_size=512,
+                num_layers=1, bidirectional=False,
+                batch_first=True),
+            tfe_l_cnn_1=torch.nn.Conv1d(
+                in_channels=2, out_channels=64,
+                kernel_size=3, stride=1,
+                padding=1),
+            tfe_l_cnn_2=torch.nn.Conv1d(
+                in_channels=64, out_channels=64,
+                kernel_size=3, stride=1,
+                padding=1),
+            tfe_l_cnn_3=torch.nn.Conv1d(
+                in_channels=64, out_channels=96,
+                kernel_size=3, stride=1,
+                padding=1),
+            tfe_l_cnn_4=torch.nn.Conv1d(
+                in_channels=96, out_channels=64,
+                kernel_size=3, stride=1,
+                padding=1),
+            tfe_l_lstm=torch.nn.GRU(
+                input_size=self.M, hidden_size=2048,
+                num_layers=1, bidirectional=False,
+                batch_first=True),
+            tfe_fc_1=torch.nn.Linear(in_features=3072, out_features=2048),
+            tfe_fc_2=torch.nn.Linear(in_features=2048, out_features=2048),
+            tfe_fc_3=torch.nn.Linear(in_features=2048, out_features=1024),
+            tfe_fc_4=torch.nn.Linear(in_features=1024, out_features=1024),
+            la_fc=[
+                torch.nn.Linear(in_features=1024 * self.N, out_features=512),
+                torch.nn.Linear(in_features=512, out_features=512),
+                torch.nn.Linear(in_features=512, out_features=256),
+                torch.nn.Linear(in_features=256, out_features=256),
+                torch.nn.Linear(in_features=256, out_features=64),
+                torch.nn.Linear(in_features=64, out_features=64),
+                torch.nn.Linear(in_features=64, out_features=self.N),
+            ]
+        )
 
-        # TODO: Use this:
-        COORDINATES_SIZE = 2
+    def _tfe_history(self, history):  # history: [B, tau, nb_coordinates]
+        first_layer = self.new['tfe_h_cnn_1'](history)  # first_layer: [B, 64, tau - 1]
+        second_layer = self.new['tfe_h_cnn_2'](first_layer)  # second_layer: [B, 64, tau - 2]
+        _, tfe_hidden = self.new['tfe_h_lstm'](second_layer)  # tfe_hidden: [1, B, 512]
+        tfe_output = tfe_hidden.squeeze()  # tfe_output: [B, 512]
+        return tfe_output
 
-        # history = [batch_size, 2, tau]
+    def _tfe_neighbors(self, neighbors):  # neighbor: [N, B, tau, nb_coordinates]
+        return list(map(self._tfe_neighbor, neighbors))
 
-        # two cnn layers for history and neighbors
-        cnn_hist = self.hist_nbrs_cnn_2(self.batchnorm1(self.hist_nbrs_cnn_1(history)))
-        cnn_hist = F.relu(cnn_hist)
-        # cnn_hist = [batch_size, 64, tau - 2 ]
-        cnn_hist = cnn_hist.permute(0, 2, 1)
-        lstm_hist, _ = self.hist_nbrs_lstm(cnn_hist)
+    def _tfe_neighbor(self, neighbor):  # neighbor: [B, tau, nb_coordinates]
+        first_layer = self.new['tfe_n_cnn_1'](neighbor)  # first_layer: [B, 64, tau - 1]
+        second_layer = self.new['tfe_n_cnn_2'](first_layer)  # second_layer: [B, 64, tau - 2]
+        _, tfe_hidden = self.new['tfe_n_lstm'](second_layer)  # tfe_hidden: [1, B, 512]
+        tfe_output = tfe_hidden.squeeze()  # tfe_output: [B, 512]
+        return tfe_output
 
-        # lstm_hist = [batch_size, tau - 2, 512]
-        lstm_hist = self.dropout(lstm_hist)
-        #lstm_hist = torch.flatten(lstm_hist, start_dim=1) # self.batch_size, (self.tau - 2) * lstm_hist.shape[2])
-        lstm_hist = lstm_hist[:, -1, :]  # use the last hidden state of LSTM
+    def _tfe_lane(self, lane):  # lane: [B, 2, M]
+        first_layer = self.new['tfe_l_cnn_1'](lane)  # first_layer: [B, 64, M]
+        second_layer = self.new['tfe_l_cnn_2'](first_layer)  # first_layer: [B, 64, M]
+        third_layer = self.new['tfe_l_cnn_3'](second_layer)  # third_layer: [B, 96, M]
+        fourth_layer = self.new['tfe_l_cnn_4'](third_layer)  # fourth_layer: [B, 64, M]
+        _, tfe_hidden = self.new['tfe_l_lstm'](fourth_layer)  # tfe_hidden: [1, B, 2048]
+        tfe_output = tfe_hidden.squeeze()  # tfe_output: [B, 2048]
+        return tfe_output
 
+    def _tfe_lanes(self, lanes):  # lanes: [N, B, 2, M]
+        return list(map(self._tfe_lane, lanes))
+
+    def _fm(self, concatenated):
+        first_layer = self.new['tfe_fc_1'](concatenated)
+        second_layer = self.new['tfe_fc_2'](first_layer)
+        third_layer = self.new['tfe_fc_3'](second_layer)
+        fourth_layer = self.new['tfe_fc_4'](third_layer)
+        return fourth_layer
+
+    def forward(self, history, lanes, neighbors, selected_lanes):
+        tfe_history = self._tfe_history(history)
+        # tfe_history: [32, 512]
+        tfe_lanes = self._tfe_lanes(lanes)
+        # tfe_lanes: N x [B, 2048]
+        tfe_neighbors = self._tfe_neighbors(neighbors)
+        # tfe_neighbors: N x [32, 512]
+
+        # Feature Merger
+        eps = []
+        for tfe_lane, tfe_neighbor in zip(tfe_lanes, tfe_neighbors):
+            # print(tfe_history.shape, tfe_lane.shape, tfe_neighbor.shape)
+            concatenated = torch.cat([tfe_history, tfe_lane, tfe_neighbor], 1)
+            eps.append(self._fm(concatenated))
+
+        # Lane Selection
+        out_la = torch.cat(eps, 1)
+        print(out_la.shape)
+        for layer in self.new['la_fc']:
+            out_la = layer(F.relu(out_la))
+        out_la = self.softmax(out_la)
+
+        # Feature Attention
+        total = np.zeros(eps[0].shape)
+
+        for weights, epsilons in zip(out_la.permute(1, 0), eps):  # For each n in N
+            # epsilon: B x 1024
+            # weights: B
+            # Weight is a list of N
+            n_total = np.zeros(eps[0].shape)
+            for index, (weight, epsilon) in enumerate(zip(weights, epsilons)):
+                # Weight: int
+                # Epsilon: list(1024)
+                n_total[index] = torch.mul(epsilon, weight).detach().numpy()
+            total += n_total
+
+        # Last Concatenation (of LA Block)
+        final_epsilon = torch.cat([tfe_history, torch.tensor(total)], 1).float()
+        # final_epsilon: [B, 1536]
+
+        lane_predictions = []
+        for i, layers in enumerate(self._mtp_fc_k):
+            output = final_epsilon
+            for layer in layers:
+                output = layer(F.relu(output))
+            lane_predictions.append(output)
+
+        for layer in self._mtp_fc_shared:
+            for index, lane in enumerate(lane_predictions):
+                lane_predictions[index] = layer(lane)
+
+        return torch.stack(lane_predictions), out_la
+
+    def _forward(self, history, lanes, neighbors):
         eps = []
         for (nbr, lane) in zip(neighbors, lanes):
             # nbr = [batch_size, 2, tau]
@@ -167,7 +310,6 @@ class LaneNet(nn.Module):
 
         print("final eps : ", final_epsilon.shape)
 
-
         lane_predictions = []
         for i, layers in enumerate(self._mtp_fc_k):
             output = final_epsilon
@@ -181,3 +323,21 @@ class LaneNet(nn.Module):
 
         return torch.stack(lane_predictions)
         # trajectories = self.mtp_fc([fc(epsilon) for fc in self.mtp_fcs])
+
+    def __forward(self):
+        # TODO: Use this:
+        COORDINATES_SIZE = 2
+
+        # history = [batch_size, 2, tau]
+
+        # two cnn layers for history and neighbors
+        cnn_hist = self.hist_nbrs_cnn_2(self.batchnorm1(self.hist_nbrs_cnn_1(history)))
+        cnn_hist = F.relu(cnn_hist)
+        # cnn_hist = [batch_size, 64, tau - 2 ]
+        cnn_hist = cnn_hist.permute(0, 2, 1)
+        lstm_hist, _ = self.hist_nbrs_lstm(cnn_hist)
+
+        # lstm_hist = [batch_size, tau - 2, 512]
+        lstm_hist = self.dropout(lstm_hist)
+        # lstm_hist = torch.flatten(lstm_hist, start_dim=1) # self.batch_size, (self.tau - 2) * lstm_hist.shape[2])
+        lstm_hist = lstm_hist[:, -1, :]  # use the last hidden state of LSTM
