@@ -27,8 +27,8 @@ batch_size = config['batch_size']
 
 
 # Loss function
-def dist(point, lane):
-    """the distance from the point `point` to the lane `lane`"""
+"""def dist(point, lane):
+    #the distance from the point `point` to the lane `lane`
     # TODO: Is it a good idea?
     x, y = point.detach().numpy()
     # The first step is to get the closest coordinates in the
@@ -48,7 +48,7 @@ def dist(point, lane):
             closest_x = x_lane
             closest_y = y_lane
     xc, yc = x - closest_x, y - closest_y
-    return np.sqrt(xc * xc + yc * yc)
+    return np.sqrt(xc * xc + yc * yc)"""
 
 
 def threshold_distance(v_hat_t_k_i, v_t_i, l_ref_t):
@@ -82,10 +82,7 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
 
     v_hat = v_hat.reshape(B, K, h, 2) # 2 : nb coordinates
     print('Entering get_loss')
-    print('v_hat:', v_hat.shape)
-    print('v:', v.shape)
-    print('all_lanes : ', all_lanes.shape)
-    print("ref_lane : ", reference_lane.shape)
+
 
     # lane_ref: B x M x 2
     # v_hat: B x K x h x 2
@@ -104,7 +101,6 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
     # target = torch.empty(B, 2, dtype=torch.long).random_(5)
 
     loss_cls = cel(out_la, reference_indices)
-    print("loss_cls : ", loss_cls)
 
     # If reference_lane is last
     # target = torch.empty(B, 2, dtype=torch.long).random_(5)
@@ -209,7 +205,7 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
 
     def get_loss_pred_t_k(t, k):
 
-        return beta * l1_loss(v_hat[t][k], v[t])  + (1 - beta) * get_loss_lane_off(t, k)
+        return beta * l1_loss(v_hat[t][k], v[t]) + (1 - beta) * get_loss_lane_off(t, k)
 
     loss_pred_t = []
     loss_pred_k = []
@@ -220,7 +216,6 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
 
     loss_pred = sum(
         loss_pred_t) / B  # sum(min(get_loss_pred_t_k(t, k) for k in range(K)) for t in tqdm(list(range(B))))
-    print("l1 loss : ", loss_pred)
     return alpha * loss_pred + (1 - alpha) * loss_cls
 
 

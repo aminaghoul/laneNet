@@ -209,6 +209,7 @@ def main_loop():
             # Then we do a forward pass
             predict, out_la = net(history, lanes, neighbors, reference_lane)
             # predict : K x B x (hx2)
+            print('predshape : ', predict.shape)
 
             v_hat = predict.permute(1, 0, 2)
             # v_hat : B x K x (hx2)

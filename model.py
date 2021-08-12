@@ -156,6 +156,7 @@ class LaneNet(nn.Module):
             tfe_fc_2=torch.nn.Linear(in_features=2048, out_features=2048),
             tfe_fc_3=torch.nn.Linear(in_features=2048, out_features=1024),
             tfe_fc_4=torch.nn.Linear(in_features=1024, out_features=1024),
+            tfe_fc_5=torch.nn.Linear(in_features=1536, out_features=self.h * self.nb_coordinates),
             la_fc=[
                 torch.nn.Linear(in_features=1024 * self.N, out_features=512),
                 torch.nn.Linear(in_features=512, out_features=512),
@@ -242,6 +243,10 @@ class LaneNet(nn.Module):
         # Last Concatenation (of LA Block)
         final_epsilon = torch.cat([tfe_history, torch.tensor(total)], 1).float()
         # final_epsilon: [B, 1536]
+        t = True
+        if t:
+            res = torch.unsqueeze(self.new['tfe_fc_5'](F.relu(final_epsilon)), 0)
+            return res, out_l
 
         lane_predictions = []
         for i, layers in enumerate(self._mtp_fc_k):
@@ -254,7 +259,7 @@ class LaneNet(nn.Module):
             for index, lane in enumerate(lane_predictions):
                 lane_predictions[index] = layer(lane)
 
-        return torch.stack(lane_predictions), out_la
+        return torch.stack(lane_predictions), out_l
 
     def _forward(self, history, lanes, neighbors):
         eps = []
