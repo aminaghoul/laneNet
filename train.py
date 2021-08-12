@@ -125,6 +125,7 @@ def main_loop():
 
     print('Initializing the data loader...', end='', flush=True)
     tr_dl = DataLoader(tr_set, batch_size=batch_size, shuffle=False, num_workers=8, collate_fn=collate_fn)
+
     print('done')
 
     # Initialize Models:
@@ -136,9 +137,11 @@ def main_loop():
 
     # Initialize Optimizer:
     print('Initializing the optimizer...', end='', flush=True)
-    optimizer = torch.optim.Adam(net.parameters(), lr=config['lr'])
-    # if hyperparams['learning_rate_style'] == 'const':
-    lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=1.0)
+    #optimizer = torch.optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
+    #lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=1.0)
+    optimizer = torch.optim.SGD(net.parameters(), lr=config['lr'])
+    steps = len(tr_dl)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
     """elif hyperparams['learning_rate_style'] == 'exp':
         lr_scheduler[node_type] = optim.lr_scheduler.ExponentialLR(optimizer[node_type],
                                                                    gamma=hyperparams['learning_decay_rate'])"""
@@ -181,7 +184,7 @@ def main_loop():
         # Variables to track training performances
         # ...
 
-        for i, (history, v, lanes, neighbors, reference_lane) in enumerate(tr_dl):
+        for i, (history, future, lanes, neighbors, reference_lane) in enumerate(tr_dl):
             print('Step ', i, '/', len(tr_dl))
 
             # history : B x tau x 2
@@ -197,7 +200,10 @@ def main_loop():
             # history : B x 2 x tau
             # lanes :  N x B x 2 x M
             # neighbors :  N x B x 2 x tau
-            v = torch.flatten(torch.permute(v.float().to(device), (0, 2, 1)), start_dim=1)
+
+            v = torch.flatten(future, start_dim=1)
+            v = v.float().to(device)
+
             # v : future : B x (h x 2)
 
             # Then we do a forward pass
@@ -214,7 +220,7 @@ def main_loop():
                 reference_indices=reference_lane,
                 alpha=alpha,
                 beta=beta,
-                v=v, h=h,
+                v=future, h=h,
                 all_lanes=lanes,
                 device=device,
                 l1_loss=l1_loss,
@@ -226,9 +232,7 @@ def main_loop():
             loss_total.backward()
             torch.nn.utils.clip_grad_value_(net.parameters(), 1.0)
             optimizer.step()
-
-            # Stepping forward the learning rate scheduler and annealers.
-            lr_scheduler.step()
+            scheduler.step()
 
             index = 0
             try:
@@ -237,21 +241,26 @@ def main_loop():
                 print(history.shape, neighbors.shape, v.shape, predict.permute(1, 0, 2).shape)
                 for t_history, t_neighbors, t_future, t_predict, t_lanes in zip(
                         history, neighbors.permute(1, 0, 2, 3),
-                        v, predict.permute(1, 0, 2), lanes.permute(1, 0, 2, 3)):
-                    print(t_lanes.shape)
+                        future, predict.permute(1, 0, 2), lanes.permute(1, 0, 2, 3)):
+
                     target_x, target_y = [], []
                     for x, y, *z in t_history.permute(1, 0):
                         target_y.append(y)
                         target_x.append(x)
                     args = [target_x, target_y, '-']
-                    target_x, target_y = t_future.reshape((2, h))
-                    args.extend([target_x, target_y, '-'])
+                    target_x, target_y, *z = t_future.permute(1,0)
+                    args.extend([target_x, target_y, '*'])
+
                     for t_k_predict in t_predict:
                         predictions_x, predictions_y = [], []
-                        for x, y, *z in t_k_predict.reshape((h, 2)):
-                            predictions_x.append(y)
-                            predictions_y.append(x)
-                        args.extend((predictions_x, predictions_y, '-'))
+                        #print(t_k_predict.reshape((2, h)).shape)
+                        t_k__predict = t_k_predict.reshape((2, h))
+                        predictions_x, predictions_y, *z = t_k__predict
+                        args.extend([predictions_x.detach().numpy(), predictions_y.detach().numpy(), '*'])
+                        """for xx, yy in zip(x, y):
+                            predictions_x.append(xx)
+                            predictions_y.append(yy)
+                        args.extend((predictions_x, predictions_y, '+'))"""
 
                     for x, y in t_lanes:
                         args.extend([x, y, '-g'])
@@ -278,6 +287,8 @@ def main_loop():
             eval_fde_batch_errors = np.hstack((eval_fde, batch_error_dict['fde']))
             print("ADE", np.min(batch_error_dict['ade']))  # sum(map(ade_t, range(B))) / B)
             print("FDE", np.min(batch_error_dict['fde']))  # sum(map(fde_t, range(B))) / B)
+
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
         torch.save({
             'epoch': epoch,
             # 'model_state_dict': net.state_dict(),
@@ -288,11 +299,11 @@ def main_loop():
             'fde': eval_fde_batch_errors
         }, 'current_state.bin')
 
-    plt.plot(eval_ade, label="ADE")
+    """plt.plot(eval_ade, label="ADE")
     plt.plot(eval_fde, label="FDE")
     plt.plot(loss, label="loss")
     plt.legend()
-    plt.show()
+    plt.show()"""
 
 
 if __name__ == '__main__':

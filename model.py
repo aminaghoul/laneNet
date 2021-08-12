@@ -198,9 +198,9 @@ class LaneNet(nn.Module):
 
     def _fm(self, concatenated):
         first_layer = self.new['tfe_fc_1'](concatenated)
-        second_layer = self.new['tfe_fc_2'](first_layer)
-        third_layer = self.new['tfe_fc_3'](second_layer)
-        fourth_layer = self.new['tfe_fc_4'](third_layer)
+        second_layer = self.new['tfe_fc_2'](F.relu(first_layer))
+        third_layer = self.new['tfe_fc_3'](F.relu(second_layer))
+        fourth_layer = self.new['tfe_fc_4'](F.relu(third_layer))
         return fourth_layer
 
     def forward(self, history, lanes, neighbors, selected_lanes):
@@ -219,11 +219,11 @@ class LaneNet(nn.Module):
             eps.append(self._fm(concatenated))
 
         # Lane Selection
-        out_la = torch.cat(eps, 1)
-        print(out_la.shape)
+        out_l = torch.cat(eps, 1)
+
         for layer in self.new['la_fc']:
-            out_la = layer(F.relu(out_la))
-        out_la = self.softmax(out_la)
+            out_l = layer(F.relu(out_l))
+        out_la = self.softmax(out_l)
 
         # Feature Attention
         total = np.zeros(eps[0].shape)

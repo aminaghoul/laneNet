@@ -71,6 +71,14 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
     # Note: the variables v and v_hat depends on the index t,
     #  therefore in the following they will be referred to as
     #  v[t] and v_hat[t], and will contain a list of M coordinates.
+    # Any prediction should be okay
+    K: int = v_hat[0].shape[0]
+    # Any variable should be okay
+    B: int = len(v_hat)
+    # The amount of coordinates in a lane
+    M: int = all_lanes.shape[2]
+
+    v_hat = v_hat.reshape(B, K, h, 2) # 2 : nb coordinates
     print('Entering get_loss')
     print('v_hat:', v_hat.shape)
     print('v:', v.shape)
@@ -83,12 +91,6 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
     # all_lanes: B x N x M x 2
     # TODO: See all places where I used reshape instead of permute
 
-    # Any prediction should be okay
-    K: int = v_hat[0].shape[0]
-    # Any variable should be okay
-    B: int = len(v_hat)
-    # The amount of coordinates in a lane
-    M: int = all_lanes.shape[2]
 
     # Defined as the cross-entropy loss for selecting the reference
     #  lane from the lane candidates.
@@ -98,7 +100,9 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
 
     # If reference_lane is first
     # target = torch.empty(B, 2, dtype=torch.long).random_(5)
+
     loss_cls = cel(out_la, reference_indices)
+    print("loss_cls : ", loss_cls)
 
     # If reference_lane is last
     # target = torch.empty(B, 2, dtype=torch.long).random_(5)
@@ -190,14 +194,19 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
         #  does it mess with everything?
         # We reshape them to have the dimension last
         #  so we can easily extract the coordinates
-        v_hat_t_k = torch.permute(v_hat_t_k.reshape((2, h,)), (1, 0))
-        v_t = torch.permute(v_t.reshape((2, h,)), (1, 0))
-        l_ref_t = torch.permute(l_ref_t.reshape((2, M,)), (1, 0))
+
+        #v_hat_t_k = torch.permute(v_hat_t_k.reshape((2, h,)), (1, 0))
+
+        #v_t = torch.permute(v_t.reshape((2, h,)), (1, 0))
+
+        #l_ref_t = torch.permute(l_ref_t.reshape((2, M,)), (1, 0))
+
         # ############################################
         # We return the sum for all the points.
         return sum(threshold_distance(*i, l_ref_t) for i in zip(v_hat_t_k, v_t)) / h
 
     def get_loss_pred_t_k(t, k):
+
         return beta * l1_loss(v_hat[t][k], v[t]) + (1 - beta) * get_loss_lane_off(t, k)
 
     loss_pred_t = []
@@ -209,7 +218,7 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
 
     loss_pred = sum(
         loss_pred_t) / B  # sum(min(get_loss_pred_t_k(t, k) for k in range(K)) for t in tqdm(list(range(B))))
-    return (alpha * loss_pred + (1 - alpha) * loss_cls)
+    return alpha * loss_pred + (1 - alpha) * loss_cls
 
 
 # Metrics
@@ -224,9 +233,8 @@ def compute_ade(predicted_trajs, gt_traj):
 
 def compute_fde(predicted_trajs, gt_traj):
     fde_k = []
-
     for predicted_traj in predicted_trajs:
-        final_error = np.linalg.norm(predicted_traj - gt_traj)
+        final_error = np.linalg.norm(predicted_traj[-1] - gt_traj[-1])
         fde_k.append(final_error)
     return np.min(fde_k).flatten()  # final_error.flatten()
 
