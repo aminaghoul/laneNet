@@ -13,7 +13,7 @@ ns_args:
   backward_lane: 30
   precision_lane: 0.5
   num_heads: 8
-  lr: 0.01
+  lr: 0.001
   weight_decay: 0.00000001
   nb_coordinates: 2
   # TODO: Explain those

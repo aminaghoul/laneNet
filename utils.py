@@ -52,13 +52,15 @@ def dist(point, lane):
 
 
 def threshold_distance(v_hat_t_k_i, v_t_i, l_ref_t):
-    if dist(v_hat_t_k_i, l_ref_t) > dist(v_t_i, l_ref_t):
-        return dist(v_hat_t_k_i, l_ref_t)
+    if torch.linalg.norm(v_hat_t_k_i - l_ref_t) > torch.linalg.norm(v_t_i - l_ref_t):
+        return torch.linalg.norm(v_hat_t_k_i - l_ref_t)
     else:
         return 0
 
 
 def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel, l1_loss, out_la):
+
+
     # TODO: Make sure we don't detach the wrong thingsAdding h
     # Internal functions
 
@@ -207,7 +209,7 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
 
     def get_loss_pred_t_k(t, k):
 
-        return beta * l1_loss(v_hat[t][k], v[t]) + (1 - beta) * get_loss_lane_off(t, k)
+        return beta * l1_loss(v_hat[t][k], v[t])  + (1 - beta) * get_loss_lane_off(t, k)
 
     loss_pred_t = []
     loss_pred_k = []
@@ -218,6 +220,7 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
 
     loss_pred = sum(
         loss_pred_t) / B  # sum(min(get_loss_pred_t_k(t, k) for k in range(K)) for t in tqdm(list(range(B))))
+    print("l1 loss : ", loss_pred)
     return alpha * loss_pred + (1 - alpha) * loss_cls
 
 
