@@ -52,7 +52,7 @@ class SuperNS(Dataset):
     def __getitem__(self, item):
         # This is the list of every element of
         #  every datasets
-        return self.__items[item]
+        return self.__items[0]
 
 
 def show_trace(interval, limit=None):
@@ -131,6 +131,10 @@ def main_loop():
     # Initialize Models:
     print('Initializing models...', end='', flush=True)
     net = LaneNet('config.yml').float().to(device)
+    print("net : ", net)
+    print('done')
+
+    print('Initializing losses...', end='', flush=True)
     l1_loss = torch.nn.L1Loss().to(device)
     cel = torch.nn.CrossEntropyLoss().to(device)
     print('done')
@@ -138,9 +142,9 @@ def main_loop():
     # Initialize Optimizer:
     print('Initializing the optimizer...', end='', flush=True)
     #optimizer = torch.optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
-    #lr_scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=1.0)
-    optimizer = torch.optim.SGD(net.parameters(), lr=config['lr'])
-    steps = len(tr_dl)
+    #scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=1.0)
+    optimizer = torch.optim.SGD(params=net.parameters(), lr=config['lr'])
+    steps = 20
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
     """elif hyperparams['learning_rate_style'] == 'exp':
         lr_scheduler[node_type] = optim.lr_scheduler.ExponentialLR(optimizer[node_type],
@@ -186,6 +190,8 @@ def main_loop():
 
         for i, (history, future, lanes, neighbors, reference_lane) in enumerate(tr_dl):
             print('Step ', i, '/', len(tr_dl))
+            if i == steps:
+                break
 
             # history : B x tau x 2
             # lanes : B x N x M x 2
@@ -269,20 +275,6 @@ def main_loop():
                     open('/dev/shm/%d.pickle' % index, 'wb').write(pickle.dumps(args))
                     index += 1
 
-            '''
-            def e(t, i, k):
-                x_a, y_a = reshaped_v[t][i]
-                x_b, y_b = reshaped_v_hat[t][k][i]
-                return np.sqrt(
-                    (x_a - x_b) ** 2 +
-                    (y_a - y_b) ** 2)
-                    
-            def ade_t(t):
-                return (min(sum(e(t, i, k) for i in range(h)) for k in range(K))) / h
-
-            def fde_t(t):
-                return (min(e(t, h - 1, k) for k in range(K))) / h'''
-
             batch_error_dict = metrics(predict.detach().numpy(), v.detach().numpy())
             eval_ade_batch_errors = np.hstack((eval_ade, batch_error_dict['ade']))
             eval_fde_batch_errors = np.hstack((eval_fde, batch_error_dict['fde']))
@@ -300,12 +292,11 @@ def main_loop():
             'fde': eval_fde_batch_errors
         }, 'current_state.bin')
 
-    """plt.plot(eval_ade, label="ADE")
+    plt.plot(eval_ade, label="ADE")
     plt.plot(eval_fde, label="FDE")
     plt.plot(loss, label="loss")
     plt.legend()
-    plt.show()"""
-
+    plt.show()
 
 if __name__ == '__main__':
     show_trace(60, 1)
