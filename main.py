@@ -3,6 +3,7 @@ import math
 import pickle
 from collections import defaultdict
 from functools import partial
+from json import dumps, loads
 from queue import Queue
 from threading import Thread
 from typing import List, Any, Tuple
@@ -15,6 +16,8 @@ from nuscenes.map_expansion.arcline_path_utils import length_of_lane
 from nuscenes.map_expansion.map_api import NuScenesMap, locations
 from nuscenes.prediction import PredictHelper, convert_global_coords_to_local
 from torch.utils.data import Dataset
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 from nuscenes import NuScenes
 
@@ -114,43 +117,274 @@ class NS(Dataset):
         self._nusc_map = NuScenesMap(map_name=self._map_name, dataroot=self._data_root)
 
         self._token_list = get_prediction_challenge_split(self._config['split'], dataroot=self._data_root)
+        self._expanded_list = [self._helper.get_sample_annotation(*i.split("_")) for i in self._token_list]
+
         try:
             # raise FileNotFoundError
-            with open('/dev/shm/cached_v6_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v10_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'rb') as f:
                 self._history, self._future, self._lanes, self._neighbors, self._reference_lanes = pickle.load(f)
         except FileNotFoundError:
             self._history, self._future, self._lanes, self._neighbors, self._reference_lanes = self._load()
             content = pickle.dumps([self._history, self._future, self._lanes, self._neighbors, self._reference_lanes])
-            with open('/dev/shm/cached_v6_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v10_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'wb') as f:
                 f.write(content)
-
-        self._history = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._history]
-        self._future = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._future]
-        self._neighbors = [np.array([[[x, y] for x, y, _, __, ___ in n] for n in sim]) for sim in self._neighbors]
-
+        if self._config['nb_coordinates'] == 2:
+            self._history = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._history]
+            self._future = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._future]
+            self._neighbors = [np.array([[[x, y] for x, y, _, __, ___ in n] for n in sim]) for sim in self._neighbors]
 
     def __len__(self):
-        # TODO: Remove this
-        # print('Length', len(self._history))
         return len(self._history)
+
+    def _get_possible_agents(self):
+        h_d = self._history_duration
+        p_d = self._prediction_duration
+
+        try:
+            agents, samples = loads(open('/dev/shm/cached_agent_v13_%s_%s_%d_%d_agents.bin' % (
+                self._map_name, self._config['split'], h_d, p_d
+            ), 'r').read().strip())
+        except FileNotFoundError:
+            instances = set(i['instance_token'] for i in self._expanded_list)
+            associated_samples, availability = dict(), defaultdict(int)
+
+            _timestamp = (lambda x: self._helper._timestamp_for_sample(x))
+            agent_attributes = sorted(self._expanded_list, key=(lambda x: _timestamp(x['sample_token'])))
+
+            for attributes in tqdm(agent_attributes):
+                if not attributes['category_name'].startswith('vehicle.'):
+                    continue
+                if self._nusc_map.get_closest_lane(*attributes['translation'][:2], 1):
+                    availability[attributes['instance_token']] += 1
+                    associated_samples.setdefault(attributes['instance_token'], list()).append(
+                        attributes['sample_token'])
+
+            # TODO: Change
+            associated_samples = dict((i, j[self._history_duration]) for i, j in associated_samples.items())
+            agents = list(filter((lambda x: availability.get(x, -1) > (h_d + p_d + 1)), instances))
+
+            open('/dev/shm/cached_agent_v13_%s_%s_%d_%d_agents.bin' % (
+                self._map_name, self._config['split'], h_d, p_d
+            ), 'w').write(dumps([agents, [associated_samples[i] for i in agents]]))
+            agents, samples = agents, [associated_samples[i] for i in agents]
+        print('Found %d candidates' % len(agents))
+        return agents, samples
+
+    def _get_full_lanes(self, instance_token: str, sample_token: str, translation=None, rotation=None) -> List[
+        np.ndarray]:
+        """
+        :param instance_token: The token used to define the agent that we want to follow
+        :param sample_token: The token used to define the sample used as the reference.
+        :return:
+        """
+
+        # TODO: De indent this
+        if True:
+            # The first step will be to retrieve all the attributes of the instance
+            # Note: it does not matter if we get too much points, as this function
+            #  will not be responsible for the neighbors coordinates
+            # TODO: Reduce the length of this function by only calling the helper to
+            #  request the whole past of the instance.
+            try:
+                # current_agent_past_attributes = [self._helper.get_sample_annotation(
+                #     instance_token, sample_token) for sample_token in past_timeline]
+                current_agent_past_attributes = self._helper.get_past_for_agent(
+                    instance_token, sample_token, self._history_duration * 15, False, False)
+                if not current_agent_past_attributes:
+                    return []
+            except KeyError:
+                return []
+            current_agent_current_attributes = self._helper.get_sample_annotation(
+                instance_token, sample_token
+            )  # current_agent_past_attributes[0]
+
+            def retrieve_associated_lane(current_attributes: dict):
+                return self._nusc_map.get_closest_lane(*current_attributes['translation'][:2], IS_ON_LANE)
+
+            # We will start with the past, as we have more data about it, and because we have to use it to have
+            #  coherent data (as we know the locations).
+            past_coordinates, expected_coordinates = [], self._backward_lane * 100
+            expected_coordinates_in_future = self._forward_lane * 100
+
+            def unique(iterator):
+                already = set()
+                for i in iterator:
+                    if i not in already:
+                        yield i
+                        already.add(i)
+
+            current_agent_past_lanes = list(
+                unique(map(retrieve_associated_lane, current_agent_past_attributes)))
+            # If the car leaves the road, then we don't want to deal with it.
+            # TODO: Is this necessary?
+            if '' in current_agent_past_lanes:
+                return []
+            # Concatenate all the roads that are unambiguous (if there is only
+            #  one way in, it is most likely the way used by the car)
+            # TODO: Is this still necessary?
+            while True:
+                _tmp = self._nusc_map.get_incoming_lane_ids(current_agent_past_lanes[-1])
+                if len(_tmp) != 1:
+                    break
+                # If the length is 1, it's like adding the element 0
+                current_agent_past_lanes.extend(_tmp)
+
+            # TODO: Think about removing the unused commented out variables
+            # reference_translation_beforehand = current_agent_past_attributes[1]['translation']
+            # This will be used as the reference point to know where to start in the road
+            reference_translation = current_agent_current_attributes['translation']
+            # See below: reference_yaw =
+            #  quaternion_yaw(Quaternion(current_agent_current_attributes['rotation']))
+
+            # The first variable is named after its only use in this loop
+            # TODO: Instead of this, what about having the first case outside of the loop?
+            for is_not_the_first_lane, current_agent_past_lane in enumerate(current_agent_past_lanes):
+                # Extract the record, then use it to extract the coordinates.
+                current_agent_past_lane_record = self._nusc_map.get_arcline_path(current_agent_past_lane)
+                current_agent_past_lane_coordinates = arcline_path_utils.discretize_lane(
+                    current_agent_past_lane_record, 0.01)
+
+                # The next step will be to see the closest point on the lane in the present.
+                # We will consider it to be the location of the car.
+                projected_coordinates, _ = arcline_path_utils.project_pose_to_lane(
+                    reference_translation, lane=current_agent_past_lane_record)
+
+                # TODO: Find in this code all the instance where I used the third coordinate as the yaw
+                # We consider the car to go with the flow
+                # TODO: Is this useful?
+                # assert abs(reference_yaw - projected_coordinates[-1]) < 0.1, (
+                #     reference_yaw, projected_coordinates, current_agent_current_attributes)
+
+                if is_not_the_first_lane:
+                    # I have to make sure we are near the exit of the previous lane.
+                    # TODO: I made a typo, but don't want to change it yet by fear of unexpected errors
+                    assert np.linalg.norm(
+                        np.array(projected_coordinates[:2]) - np.array(
+                            current_agent_past_lane_coordinates[-1][:2])) < 1, (
+                        projected_coordinates, current_agent_past_lane_coordinates[-1])
+                    # The coordinates are (I assume) ordered from entrance to exit
+                    # TODO: Make sure this is the case.
+                    # TODO: Since I will only use the lane tokens, is this really necessary?
+                    past_coordinates = current_agent_past_lane_coordinates + past_coordinates
+                else:
+                    # This is useful to see what to keep and what to throw away.
+                    indexed_coordinates = list(i for i in enumerate(current_agent_past_lane_coordinates))
+                    first_point: Tuple[int, Any] = min(indexed_coordinates, key=(lambda arg: np.linalg.norm(
+                        np.array(reference_translation[:2]) - np.array(arg[1][:2]))))
+                    # second_point: Tuple[int, Any] = min(indexed_coordinates, key=(lambda arg: np.linalg.norm(
+                    #     np.array(reference_translation_beforehand[:2]) - np.array(arg[1][:2]))))
+
+                    # We consider it to be true, otherwise we will have to change things in the code
+                    # assert first_point[0] > second_point[0], (first_point[0], second_point[0])
+
+                    # We will cut all the points after the current one (we include the current one)
+                    past_coordinates = current_agent_past_lane_coordinates[:first_point[0] + 1]
+                    expected_coordinates_in_future -= len(current_agent_past_lane_coordinates)
+                    expected_coordinates_in_future += first_point[0] + 1
+
+                reference_translation = past_coordinates[0]
+                # reference_translation_beforehand = past_coordinates[1]
+                # reference_yaw = reference_translation[-1]
+
+            # We therefore have to reverse the list here to avoid any complications later in the code
+            # We also rename the variable, as in the future the current_agent_past_lanes name will be
+            #  used to describe the list of all the possible past timelines
+            # From this point, all the lanes should be in the correct order (past to future)
+            possible_past_timeline = list(reversed(current_agent_past_lanes))
+            # This is here to make sure we don't accidentally use the old name
+            del current_agent_past_lanes
+
+            # See if we have enough road in the past to get the amount of coordinates we want.
+            # Note: before this point, the list of lanes is ordered from present to past, as the
+            #  present lane is the first lane, and because we added to the lanes in the normal order
+            if len(past_coordinates) < expected_coordinates:
+                # In that case we will have a list of different possibles histories
+                current_agent_past_lanes = []
+                # For each of them we will look at the first item, which corresponds to the furthest road
+                #  in the past, then we concatenate the resulting possibilities with the itinerary we have.
+                for i in self._get_possibilities(
+                        possible_past_timeline[0], expected_coordinates - len(past_coordinates), 'incoming'):
+                    full_road = list((*i, *possible_past_timeline))
+                    # We make sure the history is consistent.
+                    # TODO: Should we reverse the effect of cut_index?
+                    #  for instance if we see the past the uncertain data is
+                    #  about the last coordinates (by uncertain data, we mean
+                    #  the points that we got from the history, as they are coming
+                    #  from the closest lanes instead of connecting lanes).
+                    if self._verify_possibility(*full_road, cut_index=len(i)):
+                        current_agent_past_lanes.append(full_road)
+            else:
+                # In that case this is much easier, as we only have one choice
+                current_agent_past_lanes = [possible_past_timeline]
+
+        # This will hold the list of all the possible itineraries
+        final_list = []
+        # We consider the past timeline to be a list of possibilities, so
+        #  we can have a single bit of code treating every cases.
+        for possible_past_timeline in current_agent_past_lanes:
+            # According to the current timeline, we attempt to add roads until we have
+            #  enough coordinates to reconstruct the whole path.
+            # We can do as previous and only use this loop to create a list of roads, then
+            #  later in the function create another loop to populate the list of coordinates.
+            # TODO: Consider the possibility above
+            for i in self._get_possibilities(
+                    possible_past_timeline[-1], expected_coordinates_in_future, 'outgoing'):
+                # The first step is to merge the two halves of the lanes
+                # Note: Whether it is the past or the future, the
+                full_road = list((*possible_past_timeline, *i))
+                full_records = list(map(self._nusc_map.get_arcline_path, full_road))
+                full_coordinates = list(itertools.chain.from_iterable(map(
+                    partial(arcline_path_utils.discretize_lane, resolution_meters=0.01), full_records)))
+                full_indexed_coordinates = list(enumerate(full_coordinates))
+                reference_point, _ = min(full_indexed_coordinates, key=(lambda arg: np.linalg.norm(
+                    np.array(current_agent_current_attributes['translation'][:2]) - np.array(arg[1][:2]))))
+
+                # TODO: assert
+                if self._verify_possibility(*full_road, cut_index=len(possible_past_timeline)):
+                    # TODO: Make sure we don't get any one-off errors.
+                    full_coordinates = full_coordinates[slice(
+                        reference_point - int(self._backward_lane * 100),
+                        reference_point + int(self._forward_lane * 100),
+                        int(self._precision_lane * 100))]
+                    full_coordinates = np.array(list(i[:2] for i in full_coordinates))
+                    if translation is not None and rotation is not None:
+                        final_list.append(convert_global_coords_to_local(
+                            full_coordinates, translation, rotation))
+
+        return final_list
 
     def _load(self):
         h_d = self._history_duration
         p_d = self._prediction_duration
         nusc_map = self._nusc_map
 
-        expanded_list = [self._helper.get_sample_annotation(*i.split("_")) for i in self._token_list]
+        expanded_list = self._expanded_list
         instances = set(i['instance_token'] for i in expanded_list)
 
         grand_history, grand_future, grand_lanes, grand_neighbors = [], [], [], []
 
         # Choice of the agent: take the one with the most available samples
+        agents, samples = self._get_possible_agents()
+        if not agents:
+            return [], [], [], [], [],
+        for agent, sample in zip(agents, samples):
+            past = self._helper.get_past_for_agent(agent, sample, 3600, False, True)
+            future = self._helper.get_future_for_agent(agent, sample, 3600, False, True)
+            present = self._helper.get_sample_annotation(agent, sample)['translation'][:2]
+            past = [present] + past
+            lane = self._get_full_lanes(agent, sample)
+            plt.plot(*list(zip(*past)), '-g', *list(zip(*future)), '-r', *list(zip(*lane)), '-b')
+            print(lane)
+            plt.show()
+
+        raise SystemExit()
+
         try:
-            agents = open('/dev/shm/cached_agent_v4_%s_%s_%d_%d_agents.bin' % (
+            neighbors_tokens = open('/dev/shm/cached_agent_v9_%s_%s_%d_%d_neighbors.bin' % (
                 self._map_name, self._config['split'], h_d, p_d
             ), 'r').read().strip().split(',')
         except FileNotFoundError:
@@ -158,16 +392,15 @@ class NS(Dataset):
             for attributes in expanded_list:
                 if not attributes['category_name'].startswith('vehicle.'):
                     continue
-                if nusc_map.get_closest_lane(*attributes['translation'][:2], 3):
+                if nusc_map.get_closest_lane(*attributes['translation'][:2], 1):
                     availability[attributes['instance_token']] += 1
-            agents = list(filter((lambda x: availability.get(x, -1) > (h_d + p_d + 1)), instances))
-            open('/dev/shm/cached_agent_v4_%s_%s_%d_%d_agents.bin' % (
+            neighbors_tokens = list(filter((lambda x: availability.get(x, -1) > (h_d + 1)), instances))
+            open('/dev/shm/cached_agent_v9_%s_%s_%d_%d_neighbors.bin' % (
                 self._map_name, self._config['split'], h_d, p_d
-            ), 'w').write(','.join(agents))
-
-        print('Found %d candidates' % len(agents))
+            ), 'w').write(','.join(neighbors_tokens))
 
         for agent in agents:
+            current_neighbors_tokens = [i for i in neighbors_tokens if i != agent]
             # The first step is to get the list of all the attributes associated with the agent
             agent_attributes = [i for i in expanded_list if i['instance_token'] == agent]
             # TODO: Replace this with an assert, because this should (I hope) already be the case
@@ -197,8 +430,8 @@ class NS(Dataset):
             # - truncate in the past means take the h_d first, then include the current one at the beginning.
             # - we don't limit the past as much as the future in order to make sure we are able to recover
             #   the past locations of the neighbors using `extended_past`
-            past = [present] + self._helper.get_past_for_agent(agent, present['sample_token'], h_d * 15, False, False)
-            extended_past, past = past, past[:h_d + 1]
+            past = [present] + self._helper.get_past_for_agent(agent, present['sample_token'], h_d, False, False)
+            past = past[:h_d + 1]
 
             # This is important to have consistency in our data
             assert len(past) == h_d + 1, len(past)
@@ -256,7 +489,7 @@ class NS(Dataset):
             #  the cars were recorded.
             # TODO: Decide whether or not remove this, as it would probably be easier to
             #  just request the full past of the instance from the helper.
-            target_agent_extended_past_timeline = [i['sample_token'] for i in extended_past]
+            # target_agent_extended_past_timeline = [i['sample_token'] for i in extended_past]
 
             all_lanes = set()
             cars_on_lanes = dict()
@@ -268,7 +501,11 @@ class NS(Dataset):
             # We take all the vehicles in the scene, find out if they are on a lane, then
             #  add them to their assigned lanes. Later we will select one actor per lane
             #  but for now all of the vehicles are added.
+            seen = set()
+            print('Current agent', agent, agents)
             for neighbor in self._helper.get_annotations_for_sample(present['sample_token']):
+                if neighbor['instance_token'] not in current_neighbors_tokens:
+                    continue
                 # We should not care about road signs, pedestrians, etc, as we won't be
                 #  able to associate a lane to them, and as their behaviour will not match
                 #  a car's behaviour.
@@ -276,7 +513,7 @@ class NS(Dataset):
                 if neighbor["category_name"].split('.')[0] != 'vehicle':
                     continue
                 # We take the closest lane and assign the vehicle to it
-                lane = nusc_map.get_closest_lane(*neighbor['translation'][:2], IS_ON_LANE)
+                lane = nusc_map.get_closest_lane(*neighbor['translation'][:2], 1)
                 # If the vehicle is too far from any lanes, then it does not matter
                 if not lane:
                     continue
@@ -362,193 +599,16 @@ class NS(Dataset):
                 assert car['sample_token'] == present['sample_token'], (
                     car['instance_token'], car['sample_token'])
 
-            def get_full_lanes(past_timeline: List[str], instance_token: str) -> List[np.ndarray]:
-                """
-                :param past_timeline: A list of sample tokens to be used to retrieve all of the coordinates.
-                :param instance_token: The token used to define the agent that we want to follow
-                :return:
-                """
-
-                # TODO: De indent this
-                if True:
-                    # The first step will be to retrieve all the attributes of the instance
-                    # Note: it does not matter if we get too much points, as this function
-                    #  will not be responsible for the neighbors coordinates
-                    # TODO: Reduce the length of this function by only calling the helper to
-                    #  request the whole past of the instance.
-                    try:
-                        current_agent_past_attributes = [self._helper.get_sample_annotation(
-                            instance_token, sample_token) for sample_token in past_timeline]
-                    except KeyError:
-                        return []
-                    current_agent_current_attributes = current_agent_past_attributes[0]
-
-                    # TODO: Dispose of this
-                    """bitmap = BitMap(nusc_map.dataroot, nusc_map.map_name, 'basemap')
-                    fig, ax = nusc_map.render_layers(['lane'], figsize=1, bitmap=bitmap)
-                    for x in current_agent_past_attributes:
-                        nusc_map.render_next_roads(*x['translation'][:2], figsize=1, bitmap=bitmap)
-                    raise ValueError(sleep(3600))"""
-
-                    def retrieve_associated_lane(current_attributes: dict):
-                        return nusc_map.get_closest_lane(*current_attributes['translation'][:2], IS_ON_LANE)
-
-                    # We will start with the past, as we have more data about it, and because we have to use it to have
-                    #  coherent data (as we know the locations).
-                    past_coordinates, expected_coordinates = [], self._backward_lane * 100
-                    expected_coordinates_in_future = self._forward_lane * 100
-
-                    def unique(iterator):
-                        already = set()
-                        for i in iterator:
-                            if i not in already:
-                                yield i
-                                already.add(i)
-
-                    current_agent_past_lanes = list(
-                        unique(map(retrieve_associated_lane, current_agent_past_attributes)))
-                    # If the car leaves the road, then we don't want to deal with it.
-                    # TODO: Is this necessary?
-                    if '' in current_agent_past_lanes:
-                        return []
-                    # Concatenate all the roads that are unambiguous (if there is only
-                    #  one way in, it is most likely the way used by the car)
-                    # TODO: Is this still necessary?
-                    while True:
-                        _tmp = nusc_map.get_incoming_lane_ids(current_agent_past_lanes[-1])
-                        if len(_tmp) != 1:
-                            break
-                        # If the length is 1, it's like adding the element 0
-                        current_agent_past_lanes.extend(_tmp)
-
-                    # TODO: Think about removing the unused commented out variables
-                    # reference_translation_beforehand = current_agent_past_attributes[1]['translation']
-                    # This will be used as the reference point to know where to start in the road
-                    reference_translation = current_agent_current_attributes['translation']
-                    # See below: reference_yaw =
-                    #  quaternion_yaw(Quaternion(current_agent_current_attributes['rotation']))
-
-                    # The first variable is named after its only use in this loop
-                    # TODO: Instead of this, what about having the first case outside of the loop?
-                    for is_not_the_first_lane, current_agent_past_lane in enumerate(current_agent_past_lanes):
-                        # Extract the record, then use it to extract the coordinates.
-                        current_agent_past_lane_record = nusc_map.get_arcline_path(current_agent_past_lane)
-                        current_agent_past_lane_coordinates = arcline_path_utils.discretize_lane(
-                            current_agent_past_lane_record, 0.01)
-
-                        # The next step will be to see the closest point on the lane in the present.
-                        # We will consider it to be the location of the car.
-                        projected_coordinates, _ = arcline_path_utils.project_pose_to_lane(
-                            reference_translation, lane=current_agent_past_lane_record)
-
-                        # TODO: Find in this code all the instance where I used the third coordinate as the yaw
-                        # We consider the car to go with the flow
-                        # TODO: Is this useful?
-                        # assert abs(reference_yaw - projected_coordinates[-1]) < 0.1, (
-                        #     reference_yaw, projected_coordinates, current_agent_current_attributes)
-
-                        if is_not_the_first_lane:
-                            # I have to make sure we are near the exit of the previous lane.
-                            # TODO: I made a typo, but don't want to change it yet by fear of unexpected errors
-                            assert np.linalg.norm(
-                                np.array(projected_coordinates[:2]) - np.array(projected_coordinates[:2])) < 1, (
-                                projected_coordinates, current_agent_past_lane_coordinates[-1])
-                            # The coordinates are (I assume) ordered from entrance to exit
-                            # TODO: Make sure this is the case.
-                            # TODO: Since I will only use the lane tokens, is this really necessary?
-                            past_coordinates = current_agent_past_lane_coordinates + past_coordinates
-                        else:
-                            # This is useful to see what to keep and what to throw away.
-                            indexed_coordinates = list(i for i in enumerate(current_agent_past_lane_coordinates))
-                            first_point: Tuple[int, Any] = min(indexed_coordinates, key=(lambda arg: np.linalg.norm(
-                                np.array(reference_translation[:2]) - np.array(arg[1][:2]))))
-                            # second_point: Tuple[int, Any] = min(indexed_coordinates, key=(lambda arg: np.linalg.norm(
-                            #     np.array(reference_translation_beforehand[:2]) - np.array(arg[1][:2]))))
-
-                            # We consider it to be true, otherwise we will have to change things in the code
-                            # assert first_point[0] > second_point[0], (first_point[0], second_point[0])
-
-                            # We will cut all the points after the current one (we include the current one)
-                            past_coordinates = current_agent_past_lane_coordinates[:first_point[0] + 1]
-                            expected_coordinates_in_future -= len(current_agent_past_lane_coordinates)
-                            expected_coordinates_in_future += first_point[0] + 1
-
-                        reference_translation = past_coordinates[0]
-                        # reference_translation_beforehand = past_coordinates[1]
-                        # reference_yaw = reference_translation[-1]
-
-                    # We therefore have to reverse the list here to avoid any complications later in the code
-                    # We also rename the variable, as in the future the current_agent_past_lanes name will be
-                    #  used to describe the list of all the possible past timelines
-                    # From this point, all the lanes should be in the correct order (past to future)
-                    possible_past_timeline = list(reversed(current_agent_past_lanes))
-                    # This is here to make sure we don't accidentally use the old name
-                    del current_agent_past_lanes
-
-                    # See if we have enough road in the past to get the amount of coordinates we want.
-                    # Note: before this point, the list of lanes is ordered from present to past, as the
-                    #  present lane is the first lane, and because we added to the lanes in the normal order
-                    if len(past_coordinates) < expected_coordinates:
-                        # In that case we will have a list of different possibles histories
-                        current_agent_past_lanes = []
-                        # For each of them we will look at the first item, which corresponds to the furthest road
-                        #  in the past, then we concatenate the resulting possibilities with the itinerary we have.
-                        for i in self._get_possibilities(
-                                possible_past_timeline[0], expected_coordinates - len(past_coordinates), 'incoming'):
-                            full_road = list((*i, *possible_past_timeline))
-                            # We make sure the history is consistent.
-                            # TODO: Should we reverse the effect of cut_index?
-                            #  for instance if we see the past the uncertain data is
-                            #  about the last coordinates (by uncertain data, we mean
-                            #  the points that we got from the history, as they are coming
-                            #  from the closest lanes instead of connecting lanes).
-                            if self._verify_possibility(*full_road, cut_index=len(i)):
-                                current_agent_past_lanes.append(full_road)
-                    else:
-                        # In that case this is much easier, as we only have one choice
-                        current_agent_past_lanes = [possible_past_timeline]
-
-                # This will hold the list of all the possible itineraries
-                final_list = []
-                # We consider the past timeline to be a list of possibilities, so
-                #  we can have a single bit of code treating every cases.
-                for possible_past_timeline in current_agent_past_lanes:
-                    # According to the current timeline, we attempt to add roads until we have
-                    #  enough coordinates to reconstruct the whole path.
-                    # We can do as previous and only use this loop to create a list of roads, then
-                    #  later in the function create another loop to populate the list of coordinates.
-                    # TODO: Consider the possibility above
-                    for i in self._get_possibilities(
-                            possible_past_timeline[-1], expected_coordinates_in_future, 'outgoing'):
-                        # The first step is to merge the two halves of the lanes
-                        # Note: Whether it is the past or the future, the
-                        full_road = list((*possible_past_timeline, *i))
-                        full_records = list(map(nusc_map.get_arcline_path, full_road))
-                        full_coordinates = list(itertools.chain.from_iterable(map(
-                            partial(arcline_path_utils.discretize_lane, resolution_meters=0.01), full_records)))
-                        full_indexed_coordinates = list(enumerate(full_coordinates))
-                        reference_point, _ = min(full_indexed_coordinates, key=(lambda arg: np.linalg.norm(
-                            np.array(current_agent_current_attributes['translation'][:2]) - np.array(arg[1][:2]))))
-
-                        # TODO: assert
-                        if self._verify_possibility(*full_road, cut_index=len(possible_past_timeline)):
-                            # TODO: Make sure we don't get any one-off errors.
-                            full_coordinates = full_coordinates[slice(
-                                reference_point - int(self._backward_lane * 100),
-                                reference_point + int(self._forward_lane * 100),
-                                int(self._precision_lane * 100))]
-                            full_coordinates = np.array(list(i[:2] for i in full_coordinates))
-                            final_list.append(convert_global_coords_to_local(
-                                full_coordinates, present['translation'], present['rotation']))
-
-                return final_list
-
             # TODO: Decide whether or not we should be using the extended timeline
             # raise SystemExit(next(get_full_lanes(target_agent_extended_past_timeline, target_agent_token)))
 
             for lane_index, lane in enumerate(all_lanes):
                 lanes_coordinates.append(
-                    list(get_full_lanes(target_agent_extended_past_timeline, car_projected_attributes[lane_index])))
+                    list(self._get_full_lanes(
+                        car_projected_attributes[lane_index],
+                        sample_token=present['sample_token'],
+                        translation=present['translation'],
+                        rotation=present['rotation'])))
 
             grand_history.append(np.array(past_translations))
             grand_future.append(np.array(future_translations))
@@ -625,7 +685,11 @@ class NS(Dataset):
                     ) for l_m in l_n) * nu(i) for i, v_i in enumerate(future_row, 1)))
                 # TODO: Use this
                 reference_lane = min(range(len(distances)), key=distances.__getitem__)
-                all_reference_lanes.append(reference_lane)
+                """if reference_lane in new_lanes:
+                    all_reference_lanes.append(reference_lane)
+                else:
+                    print('reference lane not in all lanes !!')
+                    exit()"""
 
                 # _, distance_index = min((j, i) for i, j in enumerate(distances))
 
@@ -657,6 +721,7 @@ class NS(Dataset):
                 matplotlib.pyplot.plot(list(__x), list(__y))
                 matplotlib.pyplot.show()
                 return False"""
+                void()
 
         # V^(p), V^(f), L^n, V^n, L_ref
         return new_history, new_future, new_lanes, new_neighbors, list(

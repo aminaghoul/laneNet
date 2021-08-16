@@ -52,7 +52,7 @@ class SuperNS(Dataset):
     def __getitem__(self, item):
         # This is the list of every element of
         #  every datasets
-        return self.__items[0]
+        return self.__items[item]
 
 
 def show_trace(interval, limit=None):
@@ -135,7 +135,7 @@ def main_loop():
     print('done')
 
     print('Initializing losses...', end='', flush=True)
-    l1_loss = torch.nn.L1Loss().to(device)
+    l1_loss = torch.nn.SmoothL1Loss().to(device)
     cel = torch.nn.CrossEntropyLoss().to(device)
     print('done')
 
@@ -150,21 +150,23 @@ def main_loop():
         lr_scheduler[node_type] = optim.lr_scheduler.ExponentialLR(optimizer[node_type],
                                                                    gamma=hyperparams['learning_decay_rate'])"""
     print('done')
-
     with do_something('Initializing processors'):
 
         try:
             previous_state = torch.load('current_state.bin')
+            print(previous_state)
             start_epoch = previous_state['epoch']
             val_loss = previous_state['loss']
             min_val_loss = previous_state['min_val_loss']
-            # optimizer.load_state_dict(previous_state['optimizer_state_dict'])
-            # net.load_state_dict(previous_state['model_state_dict'])
+            #optimizer.load_state_dict(optimizer.state_dict())
+            #net.load_state_dict( net.state_dict())
 
         except FileNotFoundError:
-            start_epoch = 1
+            start_epoch = 0
             val_loss = math.inf
             min_val_loss = math.inf
+            #optimizer.state_dict()
+            #net.state_dict()
 
     print('Initialized')
 
@@ -213,7 +215,9 @@ def main_loop():
             # v : future : B x (h x 2)
 
             # Then we do a forward pass
-            predict, out_la = net(history, lanes, neighbors, reference_lane)
+
+            predict, out_la = net(history, lanes, neighbors)
+
             # predict : K x B x (hx2)
             print('predshape : ', predict.shape)
 
@@ -222,7 +226,8 @@ def main_loop():
 
             # Then we calculate the losses
             optimizer.zero_grad()
-            loss_total = get_loss(
+            loss_total = l1_loss(predict[0], v)
+            """loss_total = get_loss(
                 v_hat=v_hat,
                 reference_indices=reference_lane,
                 alpha=alpha,
@@ -232,35 +237,54 @@ def main_loop():
                 device=device,
                 l1_loss=l1_loss,
                 cel=cel, out_la=out_la
-            )
+            )"""
             loss.append(loss_total)
+
             print('Loss:', loss_total)
 
             loss_total.backward()
-            torch.nn.utils.clip_grad_value_(net.parameters(), 1.0)
+            #torch.nn.utils.clip_grad_value_(net.parameters(), 1.0)
             optimizer.step()
             scheduler.step()
+            all_lanes = lanes.permute(1, 0, 3, 2)
+
+            reference = []
+            for index, reference_index in enumerate(reference_lane):
+                reference.append(all_lanes[index][reference_index])
+            reference = torch.stack(reference).permute(0, 2, 1)
+
 
             index = 0
             try:
                 raise KeyboardInterrupt
             except KeyboardInterrupt:
                 print(history.shape, neighbors.shape, v.shape, predict.permute(1, 0, 2).shape)
-                for t_history, t_neighbors, t_future, t_predict, t_lanes in zip(
+                for t_history, t_neighbors, t_future, t_predict, t_lanes, ref in zip(
                         history, neighbors.permute(1, 0, 2, 3),
-                        future, predict.permute(1, 0, 2), lanes.permute(1, 0, 2, 3)):
+                        future, predict.permute(1, 0, 2), lanes.permute(1, 0, 2, 3), reference):
+                    # t_neighbors : N x nb_cordinates x (tau + 1)
 
                     target_x, target_y = [], []
                     for x, y, *z in t_history.permute(1, 0):
                         target_y.append(y)
                         target_x.append(x)
                     args = [target_x, target_y, '-']
-                    target_x, target_y, *z = t_future.permute(1,0)
+                    target_x, target_y, *z = t_future.permute(1, 0)
                     args.extend([target_x, target_y, '*'])
 
+                    l_x, l_y, *z = ref
+                    args.extend([l_x, l_y, '*'])
+
+                    for neighbor in t_neighbors:
+                        neighbors_x, neighbors_y = [], []
+                        for n_x, n_y, *z in neighbor:
+                            neighbors_x.append(n_x)
+                            neighbors_y.append(n_y)
+                        args.extend([neighbors_x, neighbors_y, '-'])
+
                     for t_k_predict in t_predict:
-                        predictions_x, predictions_y = [], []
-                        #print(t_k_predict.reshape((2, h)).shape)
+                        # predictions_x, predictions_y = [], []
+                        # print(t_k_predict.reshape((2, h)).shape)
                         t_k__predict = t_k_predict.reshape((2, h))
                         predictions_x, predictions_y, *z = t_k__predict
                         args.extend([predictions_x.detach().numpy(), predictions_y.detach().numpy(), '*'])
@@ -284,8 +308,8 @@ def main_loop():
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
         torch.save({
             'epoch': epoch,
-            # 'model_state_dict': net.state_dict(),
-            # 'optimizer_state_dict': optimizer.state_dict(),
+            #'model_state_dict': net.state_dict(),
+            #'optimizer_state_dict': optimizer.state_dict(),
             'loss': val_loss,
             'min_val_loss': min(val_loss, min_val_loss),
             'ade': eval_ade_batch_errors,

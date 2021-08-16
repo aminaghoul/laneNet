@@ -142,3 +142,74 @@ def __forward(self):
     lstm_hist = self.dropout(lstm_hist)
     # lstm_hist = torch.flatten(lstm_hist, start_dim=1) # self.batch_size, (self.tau - 2) * lstm_hist.shape[2])
     lstm_hist = lstm_hist[:, -1, :]  # use the last hidden state of LSTM
+
+
+"""for i in range(self.k):
+    # input size, specification, output size
+    # B X 1536,   u512,          B X 512
+    # B X 512,    u512,          B X 512
+    # B X 512,    u256,          B X 256
+    self._mtp_fc_k.append([
+        torch.nn.Linear(in_features=1536, out_features=512),
+        torch.nn.Linear(in_features=512, out_features=512),
+        torch.nn.Linear(in_features=512, out_features=256)
+    ])"""
+
+"""self.new = dict(
+         tfe_h_cnn_1=torch.nn.Conv1d(
+             in_channels=self.nb_coordinates,
+             out_channels=64, kernel_size=2,
+             stride=1, padding=0),
+         tfe_h_cnn_2=torch.nn.Conv1d(
+             in_channels=64, out_channels=64,
+             kernel_size=2, stride=1, padding=0),
+         tfe_h_lstm=torch.nn.LSTM(
+             input_size=self.tau - 2, hidden_size=512,
+             num_layers=1, bidirectional=False,
+             batch_first=True),
+         tfe_n_cnn_1=torch.nn.Conv1d(
+             in_channels=self.nb_coordinates,
+             out_channels=64, kernel_size=2,
+             stride=1, padding=0),
+         tfe_n_cnn_2=torch.nn.Conv1d(
+             in_channels=64, out_channels=64,
+             kernel_size=2, stride=1, padding=0),
+         tfe_n_lstm=torch.nn.LSTM(
+             input_size=self.tau - 2, hidden_size=512,
+             num_layers=1, bidirectional=False,
+             batch_first=True),
+         tfe_l_cnn_1=torch.nn.Conv1d(
+             in_channels=2, out_channels=64,
+             kernel_size=3, stride=1,
+             padding=1),
+         tfe_l_cnn_2=torch.nn.Conv1d(
+             in_channels=64, out_channels=64,
+             kernel_size=3, stride=1,
+             padding=1),
+         tfe_l_cnn_3=torch.nn.Conv1d(
+             in_channels=64, out_channels=96,
+             kernel_size=3, stride=1,
+             padding=1),
+         tfe_l_cnn_4=torch.nn.Conv1d(
+             in_channels=96, out_channels=64,
+             kernel_size=3, stride=1,
+             padding=1),
+         tfe_l_lstm=torch.nn.LSTM(
+             input_size=self.M, hidden_size=2048,
+             num_layers=1, bidirectional=False,
+             batch_first=True),
+         tfe_fc_1=torch.nn.Linear(in_features=3072, out_features=2048),
+         tfe_fc_2=torch.nn.Linear(in_features=2048, out_features=2048),
+         tfe_fc_3=torch.nn.Linear(in_features=2048, out_features=1024),
+         tfe_fc_4=torch.nn.Linear(in_features=1024, out_features=1024),
+         tfe_fc_5=torch.nn.Linear(in_features=6656, out_features=self.h * self.nb_coordinates),
+         la_fc=[
+             torch.nn.Linear(in_features=1024 * self.N, out_features=512),
+             torch.nn.Linear(in_features=512, out_features=512),
+             torch.nn.Linear(in_features=512, out_features=256),
+             torch.nn.Linear(in_features=256, out_features=256),
+             torch.nn.Linear(in_features=256, out_features=64),
+             torch.nn.Linear(in_features=64, out_features=64),
+             torch.nn.Linear(in_features=64, out_features=self.N),
+         ]
+     )"""

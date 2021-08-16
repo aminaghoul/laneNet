@@ -27,10 +27,10 @@ batch_size = config['batch_size']
 
 
 # Loss function
-"""def dist(point, lane):
+def dist(point, lane):
     #the distance from the point `point` to the lane `lane`
     # TODO: Is it a good idea?
-    x, y = point.detach().numpy()
+    x, y, *z = point #.detach().numpy()
     # The first step is to get the closest coordinates in the
     #  lane
     # TODO: See if we can finer than that
@@ -39,21 +39,21 @@ batch_size = config['batch_size']
     closest_x = -np.inf
     closest_y = -np.inf
     closest_distance = np.inf
-    for x_lane, y_lane in lane.detach().numpy():
-        distance = np.sqrt(
-            np.power(x - x_lane, 2) +
-            np.power(y - y_lane, 2))
+    for x_lane, y_lane, *z in lane: #.detach().numpy():
+        distance = math.sqrt(
+            math.pow(x - x_lane, 2) +
+            math.pow(y - y_lane, 2))
         if distance < closest_distance:
             closest_distance = distance
             closest_x = x_lane
             closest_y = y_lane
     xc, yc = x - closest_x, y - closest_y
-    return np.sqrt(xc * xc + yc * yc)"""
-
+    return math.sqrt(xc * xc + yc * yc)
 
 def threshold_distance(v_hat_t_k_i, v_t_i, l_ref_t):
-    if torch.linalg.norm(v_hat_t_k_i - l_ref_t) > torch.linalg.norm(v_t_i - l_ref_t):
-        return torch.linalg.norm(v_hat_t_k_i - l_ref_t)
+
+    if dist(v_hat_t_k_i, l_ref_t) > dist(v_t_i, l_ref_t):
+        return dist(v_hat_t_k_i, l_ref_t)
     else:
         return 0
 
@@ -70,6 +70,7 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
     for index, reference_index in enumerate(reference_indices):
         reference_lane.append(all_lanes[index][reference_index])
     reference_lane = torch.stack(reference_lane)
+
     # Note: the variables v and v_hat depends on the index t,
     #  therefore in the following they will be referred to as
     #  v[t] and v_hat[t], and will contain a list of M coordinates.
@@ -204,8 +205,7 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
         return sum(threshold_distance(*i, l_ref_t) for i in zip(v_hat_t_k, v_t)) / h
 
     def get_loss_pred_t_k(t, k):
-
-        return beta * l1_loss(v_hat[t][k], v[t]) + (1 - beta) * get_loss_lane_off(t, k)
+        return l1_loss(v_hat[t][k], v[t]) # * beta  + (1 - beta) * get_loss_lane_off(t, k)
 
     loss_pred_t = []
     loss_pred_k = []

@@ -45,7 +45,7 @@ class LaneNet(nn.Module):
         self.hidden_size = self._ns_config['hidden_size']
         self.h = self._ns_config['prediction_duration']
         self.num_heads = self._ns_config['num_heads']
-
+        self.bidirectional = False
         self.nb_coordinates = self._ns_config['nb_coordinates']
 
         # #######################################################################################
@@ -56,8 +56,12 @@ class LaneNet(nn.Module):
         self.tfe_h_cnn_2=torch.nn.Conv1d(in_channels=64, out_channels=64, kernel_size=2, stride=1, padding=0)
         self.tfe_h_lstm=torch.nn.LSTM(
                 input_size=self.tau - 2, hidden_size=512,
-                num_layers=1, bidirectional=False,
+                num_layers=1, bidirectional=self.bidirectional,
                 batch_first=True)
+        self.tfe_h_lstm = torch.nn.LSTM(
+            input_size=self.tau, hidden_size=512,
+            num_layers=1, bidirectional=self.bidirectional,
+            batch_first=True) # test à retirer
         self.tfe_n_cnn_1=torch.nn.Conv1d(
                 in_channels=self.nb_coordinates,
                 out_channels=64, kernel_size=2,
@@ -68,7 +72,7 @@ class LaneNet(nn.Module):
 
         self.tfe_n_lstm=torch.nn.LSTM(
                 input_size=self.tau - 2, hidden_size=512,
-                num_layers=1, bidirectional=False,
+                num_layers=1, bidirectional=self.bidirectional,
                 batch_first=True)
 
         self.tfe_l_cnn_1=torch.nn.Conv1d(
@@ -93,14 +97,16 @@ class LaneNet(nn.Module):
 
         self.tfe_l_lstm=torch.nn.LSTM(
                 input_size=self.M, hidden_size=2048,
-                num_layers=1, bidirectional=False,
+                num_layers=1, bidirectional=self.bidirectional,
                 batch_first=True)
 
-        self.tfe_fc_1 = torch.nn.Linear(in_features=3072, out_features=2048)
+        self.tfe_fc_1 = torch.nn.Linear(in_features=3072 * 2 if self.bidirectional else 3072, out_features=2048)
         self.tfe_fc_2 = torch.nn.Linear(in_features=2048, out_features=2048)
         self.tfe_fc_3 = torch.nn.Linear(in_features=2048, out_features=1024)
         self.tfe_fc_4 = torch.nn.Linear(in_features=1024, out_features=1024)
-        self.tfe_fc_5 = torch.nn.Linear(in_features=6656, out_features=self.h * self.nb_coordinates)
+        self.tfe_fc_5 = torch.nn.Linear(in_features= 1024 + 3072 * 2 if self.bidirectional else 6656, out_features=self.h * self.nb_coordinates)
+        self.tfe_fc_6 = torch.nn.Linear(in_features=512, out_features=self.h * self.nb_coordinates)
+
         self.la_fc1 = torch.nn.Linear(in_features=1024 * self.N, out_features=512)
         self.la_fc2 = torch.nn.Linear(in_features=512, out_features=512)
         self.la_fc3 = torch.nn.Linear(in_features=512, out_features=256)
@@ -114,86 +120,25 @@ class LaneNet(nn.Module):
                                              torch.nn.Linear(in_features=512, out_features=256)])
         self._mtp_fc_k = torch.nn.ModuleList([self._mtp_fc for k in range(self.k)])
 
-        """for i in range(self.k):
-            # input size, specification, output size
-            # B X 1536,   u512,          B X 512
-            # B X 512,    u512,          B X 512
-            # B X 512,    u256,          B X 256
-            self._mtp_fc_k.append([
-                torch.nn.Linear(in_features=1536, out_features=512),
-                torch.nn.Linear(in_features=512, out_features=512),
-                torch.nn.Linear(in_features=512, out_features=256)
-            ])"""
+
 
         self._mtp_fc_shared = torch.nn.ModuleList([torch.nn.Linear(in_features=256, out_features=256),
                                                    torch.nn.Linear(in_features=256, out_features=self.h * self.nb_coordinates)])
 
 
-        """self.new = dict(
-            tfe_h_cnn_1=torch.nn.Conv1d(
-                in_channels=self.nb_coordinates,
-                out_channels=64, kernel_size=2,
-                stride=1, padding=0),
-            tfe_h_cnn_2=torch.nn.Conv1d(
-                in_channels=64, out_channels=64,
-                kernel_size=2, stride=1, padding=0),
-            tfe_h_lstm=torch.nn.LSTM(
-                input_size=self.tau - 2, hidden_size=512,
-                num_layers=1, bidirectional=False,
-                batch_first=True),
-            tfe_n_cnn_1=torch.nn.Conv1d(
-                in_channels=self.nb_coordinates,
-                out_channels=64, kernel_size=2,
-                stride=1, padding=0),
-            tfe_n_cnn_2=torch.nn.Conv1d(
-                in_channels=64, out_channels=64,
-                kernel_size=2, stride=1, padding=0),
-            tfe_n_lstm=torch.nn.LSTM(
-                input_size=self.tau - 2, hidden_size=512,
-                num_layers=1, bidirectional=False,
-                batch_first=True),
-            tfe_l_cnn_1=torch.nn.Conv1d(
-                in_channels=2, out_channels=64,
-                kernel_size=3, stride=1,
-                padding=1),
-            tfe_l_cnn_2=torch.nn.Conv1d(
-                in_channels=64, out_channels=64,
-                kernel_size=3, stride=1,
-                padding=1),
-            tfe_l_cnn_3=torch.nn.Conv1d(
-                in_channels=64, out_channels=96,
-                kernel_size=3, stride=1,
-                padding=1),
-            tfe_l_cnn_4=torch.nn.Conv1d(
-                in_channels=96, out_channels=64,
-                kernel_size=3, stride=1,
-                padding=1),
-            tfe_l_lstm=torch.nn.LSTM(
-                input_size=self.M, hidden_size=2048,
-                num_layers=1, bidirectional=False,
-                batch_first=True),
-            tfe_fc_1=torch.nn.Linear(in_features=3072, out_features=2048),
-            tfe_fc_2=torch.nn.Linear(in_features=2048, out_features=2048),
-            tfe_fc_3=torch.nn.Linear(in_features=2048, out_features=1024),
-            tfe_fc_4=torch.nn.Linear(in_features=1024, out_features=1024),
-            tfe_fc_5=torch.nn.Linear(in_features=6656, out_features=self.h * self.nb_coordinates),
-            la_fc=[
-                torch.nn.Linear(in_features=1024 * self.N, out_features=512),
-                torch.nn.Linear(in_features=512, out_features=512),
-                torch.nn.Linear(in_features=512, out_features=256),
-                torch.nn.Linear(in_features=256, out_features=256),
-                torch.nn.Linear(in_features=256, out_features=64),
-                torch.nn.Linear(in_features=64, out_features=64),
-                torch.nn.Linear(in_features=64, out_features=self.N),
-            ]
-        )"""
+
 
     def _tfe_history(self, history):  # history: [B, tau, nb_coordinates]
-        first_layer = self.tfe_h_cnn_1(history)  # first_layer: [B, 64, tau - 1]
-        second_layer = self.tfe_h_cnn_2(first_layer)  # second_layer: [B, 64, tau - 2]
-        out_lstm, *hc = self.tfe_h_lstm(second_layer)  # tfe_hidden: [1, B, 512]
-        tfe_output = out_lstm[:, -1, :]  # tfe_output: [B, 2048]
-        return tfe_output
+        # first_layer = self.tfe_h_cnn_1(history)  # first_layer: [B, 64, tau - 1]
+        # second_layer = self.tfe_h_cnn_2(first_layer)  # second_layer: [B, 64, tau - 2]
+        out_lstm, (hidden, cell) = self.tfe_h_lstm(history) # second_layer)  # tfe_hidden: [1, B, 512]
+        if self.tfe_h_lstm.bidirectional:
+            hidden = self.dropout(torch.cat([hidden[-1], hidden[-2]], dim=-1))
+            # hidden = [batch size, hidden dim * 2]
+        else:
+            hidden = self.dropout(hidden[-1])
+        #tfe_output = out_lstm[:, -1, :]  # tfe_output: [B, 2048]
+        return hidden
 
     def _tfe_neighbors(self, neighbors):  # neighbor: [N, B, tau, nb_coordinates]
         return list(map(self._tfe_neighbor, neighbors))
@@ -201,18 +146,29 @@ class LaneNet(nn.Module):
     def _tfe_neighbor(self, neighbor):  # neighbor: [B, tau, nb_coordinates]
         first_layer = self.tfe_n_cnn_1(neighbor)  # first_layer: [B, 64, tau - 1]
         second_layer = self.tfe_n_cnn_2(first_layer)  # second_layer: [B, 64, tau - 2]
-        out_lstm, *hc = self.tfe_n_lstm(second_layer)  # tfe_hidden: [1, B, 512]
-        tfe_output = out_lstm[:, -1, :]  # tfe_output: [B, 2048]
-        return tfe_output
+        out_lstm, (hidden, cell) = self.tfe_n_lstm(second_layer)  # tfe_hidden: [1, B, 512]
+        if self.tfe_n_lstm.bidirectional:
+            hidden = self.dropout(torch.cat([hidden[-1], hidden[-2]], dim=-1))
+            # hidden = [batch size, hidden dim * 2]
+        else:
+            hidden = self.dropout(hidden[-1])
+
+        #tfe_output = out_lstm[:, -1, :]  # tfe_output: [B, 2048]
+        return hidden
 
     def _tfe_lane(self, lane):  # lane: [B, 2, M]
         first_layer = self.tfe_l_cnn_1(lane)  # first_layer: [B, 64, M]
         second_layer = self.tfe_l_cnn_2(first_layer)  # first_layer: [B, 64, M]
         third_layer = self.tfe_l_cnn_3(second_layer)  # third_layer: [B, 96, M]
         fourth_layer = self.tfe_l_cnn_4(third_layer)  # fourth_layer: [B, 64, M]
-        out_lstm, *hc  = self.tfe_l_lstm(fourth_layer)  # tfe_hidden: [1, B, 2048]
-        tfe_output = out_lstm[:,-1,:]  # tfe_output: [B, 2048]
-        return tfe_output
+        out_lstm, (hidden, cell) = self.tfe_l_lstm(fourth_layer)  # tfe_hidden: [1, B, 2048]
+        if self.tfe_l_lstm.bidirectional:
+            hidden = self.dropout(torch.cat([hidden[-1], hidden[-2]], dim=-1))
+            # hidden = [batch size, hidden dim * 2]
+        else:
+            hidden = self.dropout(hidden[-1])
+        #tfe_output = out_lstm[:,-1,:]  # tfe_output: [B, 2048]
+        return hidden
 
     def _tfe_lanes(self, lanes):  # lanes: [N, B, 2, M]
         return list(map(self._tfe_lane, lanes))
@@ -224,7 +180,7 @@ class LaneNet(nn.Module):
         fourth_layer = self.tfe_fc_4(F.relu(third_layer))
         return fourth_layer
 
-    def forward(self, history, lanes, neighbors, selected_lanes):
+    def forward(self, history, lanes, neighbors):
 
         tfe_history = self._tfe_history(history)
         # tfe_history: [32, 512]
@@ -250,7 +206,11 @@ class LaneNet(nn.Module):
         layer5 = self.la_fc5(layer4)
         layer6 = self.la_fc6(layer5)
         layer7 = self.la_fc7(layer6)
-
+        t = True
+        if t:
+            #out = torch.cat([torch.cat(eps, 1), tfe_history], 1)
+            res = torch.unsqueeze(self.tfe_fc_6(tfe_history), 0)
+            return res, layer7
         out_la = self.softmax(layer7)
 
         # Feature Attention
@@ -272,12 +232,6 @@ class LaneNet(nn.Module):
         # Last Concatenation (of LA Block)
         final_epsilon = torch.cat([tfe_history, total], 1).float()
         # final_epsilon: [B, 1536]
-
-        t = True
-        if t:
-            out = torch.cat([torch.cat(eps, 1), tfe_history], 1)
-            res = torch.unsqueeze(self.tfe_fc_5(F.relu(out)), 0)
-            return res, layer7
 
 
 

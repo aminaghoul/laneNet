@@ -5,7 +5,7 @@ ns_args:
 
   history_duration: 4 # tau
   prediction_duration: 12 # h
-  nb_lane_candidates: 6 # N
+  nb_lane_candidates: 4 # N
   number_of_predictions: 1 # K
   batch_size: 32 # 32
   lane_amount_of_coordinates: 150
@@ -19,7 +19,7 @@ ns_args:
   # TODO: Explain those
   hidden_size: 64
   nb_columns: 2
-  num_epochs: 10
+  num_epochs: 20
   log_dir: './results'
   steps_to_log_train_loss: 100
   alpha: 1
