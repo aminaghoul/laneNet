@@ -94,7 +94,7 @@ def discretize_lanes(nusc_map: NuScenesMap, lanes):
     """
     new = [i for i in lanes if i not in _discredized_lanes]
     _discredized_lanes.update(nusc_map.discretize_lanes(new, 0.5))
-    return [[j[:2] for j in _discredized_lanes[i]] for i in lanes]
+    return [[np.array(j[:2]) for j in _discredized_lanes[i]] for i in lanes]
 
 
 # nusc.render_sample(st)
@@ -185,31 +185,81 @@ class Scene:
         self._reference_sample_index, self._reference_sample_token = self._determinate_reference_sample()
         self._reference_timestamp = self._samples_timestamps[self._reference_sample_index]
 
-        self._split_history = (lambda _list: _list[:self._reference_sample_index + 1][-tau:])
+        self._split_history = (lambda _list: _list[:self._reference_sample_index + 1][-tau - 1:])
 
-        self._ego = [self._ego[timestamp]['translation'][:2] for timestamp in self._samples_timestamps]
+        self._ego = [np.array(self._ego[timestamp]['translation'][:2]) for timestamp in self._samples_timestamps]
         self._ego_history = self._split_history(self._ego)
         self._ego_future = self._ego[self._reference_sample_index + 1:][:h]
 
         x, y = self._ego_history[-1]
 
-        self._close_lanes = list(self._filter_uniques(iter_lanes(self._nusc_map, x, y, 10)))
-        show_trajectory(*discretize_lanes(self._nusc_map, self._close_lanes))
-        raise ValueError()
+        self._close_lanes = list(self._filter_uniques(iter_lanes(self._nusc_map, x, y, 100)))
 
         neighbors = self._neighbors = self._get_neighbors()
-        # First step is to get all the lanes associated with each neighbors
-        # self._neighbors_lanes = list()
-        # for neighbor in neighbors:
-        #     self._neighbors_lanes.append(self._get_full_lanes(neighbor))
 
-        lanes = iter_lanes(self._nusc_map, x, y, 10)
+        # discretize_lanes(self._nusc_map, possible_lane)
+
+        # First step is to get all the lanes associated with each neighbors
+        # This will be a mapping of all the close lanes to possible neighbor
+        #  lanes
+        close_possibilities = dict((i, {}) for i in self._close_lanes)
+        close_possibilities[None] = {}
+
+        neighbors_distances = [np.linalg.norm(neighbor - self._ego_history[-1]) for neighbor in neighbors]
+
+        for neighbor_index, neighbor in enumerate(neighbors):
+            closest_lane = next(iter_lanes(self._nusc_map, *neighbor[-1], 10))
+            possible_lanes = list(self._elongate_lanes([closest_lane]))
+            for possible_lane in possible_lanes:
+                close_lane = [i for i in possible_lane if i in self._close_lanes]
+                if not close_lane:
+                    close_lane = [None]
+                for close_lane in close_lane:
+                    close_possibilities[close_lane][neighbor_index] = possible_lane
+
+        associated_lanes = set()
+        while close_possibilities:
+            # I use a list to avoid the error that arise when changing
+            #  the size of the dict while going through it.
+            for key in list(close_possibilities):
+                value = close_possibilities.pop(key)
+                # TODO: Find ways to use those
+                if not value:
+                    continue
+                if len(value) == 1:
+                    (val, val2), = value.items()
+                    associated_lanes.add((key, val, val2))
+                    # We remove the neighbor index from other possibilities
+                    for k, v in close_possibilities.items():
+                        close_possibilities[k] = dict((i, j) for i, j in v.items() if i != val)
+                else:
+                    # We put ambiguous values back
+                    close_possibilities[key] = value
+
+            if not close_possibilities:
+                break
+            closest_undecided = next(i for i in self._close_lanes if i in close_possibilities)
+            accepted = min(close_possibilities[closest_undecided], key=neighbors_distances.__getitem__)
+            associated_lanes.add((closest_undecided, accepted, close_possibilities.pop(closest_undecided)[accepted]))
+            for k, v in close_possibilities.items():
+                close_possibilities[k] = dict((i, j) for i, j in v.items() if i != accepted)
+
+        def iterate():
+            for i in self._close_lanes:
+                for j, k, l in associated_lanes:
+                    if j == i:
+                        yield j, k, l
+
+        associated_lanes = list(iterate())[:n]
+
+        exit()
+        """lanes = iter_lanes(self._nusc_map, x, y, 10)
         lanes = list(self._elongate_lanes(lanes))
         # lanes = list(cut_iterator(lanes, n))
         coordinates = [discretize_lanes(self._nusc_map, lane) for lane in lanes]
-        coordinates = [[[j[:2] for j in i] for i in c.values()] for c in coordinates]
+        coordinates = [[[j[:2] for j in i] for i in c] for c in coordinates]
         show_trajectory(*chain.from_iterable(coordinates), self._ego_history, *neighbors, )
-        # In order to simplify the lane finding, we will associate each
+        # In order to simplify the lane finding, we will associate each"""
         #  agent to a lane.
 
         raise ValueError
@@ -221,14 +271,15 @@ class Scene:
                 yield lane
             connected.update(self._nusc_map.get_incoming_lane_ids(lane))
             connected.update(self._nusc_map.get_outgoing_lane_ids(lane))
+            connected.add(lane)
 
-    """def _get_full_lanes(self, history: np.array) -> List[np.array]:
+    def _get_full_lanes(self, history: np.array) -> List[np.array]:
         try:
             lanes = iter_lanes(self._nusc_map, *history[-1], 10)
         except ValueError:
             return []
         lanes = self._elongate_lanes(lanes)
-        raise ValueError(list(lanes))"""
+        raise ValueError(list(lanes))
 
     def _put_together(self, lane_id: str, callback: callable, remaining_length: float, *already):
         for lane in callback(lane_id):
@@ -262,7 +313,8 @@ class Scene:
             # raise ValueError(lane)
 
     def _get_neighbors(self):
-        neighbors = []  # np.array((n, tau, 2))
+        """Get a list of histories of neighbors"""
+        neighbors = []  # [., tau, 2]
         for instance in self._instances:
             instance_coordinates = np.full((tau + 1, 2), np.nan)
             first_value, first_index = None, -1
@@ -282,7 +334,7 @@ class Scene:
                     for sample_index in range(first_index):
                         instance_coordinates[sample_index] = first_value
                 neighbors.append(instance_coordinates)
-        return neighbors
+        return sorted(neighbors, key=(lambda neighbor: np.linalg.norm(neighbor[-1] - self._ego_history[-1])))
 
     def _determinate_reference_sample(self):
         """Determine the reference sample, as a tuple sample_id, sample_token.
