@@ -4,6 +4,8 @@ import pickle
 from collections import defaultdict
 from functools import partial
 from json import dumps, loads
+from os import makedirs
+from os.path import join
 from queue import Queue
 from threading import Thread
 from typing import List, Any, Tuple
@@ -55,32 +57,15 @@ def distance_lane(reference_map, reference, lane):
     return np.sqrt(((x_r - x_l) ** 2) + ((y_r - y_l) ** 2))
 
 
+#
+
+
 class NS(Dataset):
     @classmethod
-    def every_map(cls, config_path, split="mini_train", multi_thread=False):
+    def every_map(cls, config_path, split="mini_train"):
         # TODO: Test the method with multi_thread on
-        def worker(_map_name: str):
-            try:
-                output.put((None, NS(config_path, _map_name, split)))
-            except BaseException as exception:
-                output.put((exception, None))
-
-        if multi_thread:
-            output = Queue()
-            for map_name in locations:
-                Thread(
-                    target=worker,
-                    args=[map_name],
-                    daemon=True).start()
-            for index in range(len(locations)):
-                error, result = output.get()
-                # TODO: Stop the other workers
-                if error is not None:
-                    raise error
-                yield result
-        else:
-            for map_name in locations:
-                yield NS(config_path, map_name, split)
+        for map_name in [locations[2]]:
+            yield NS(config_path, map_name, split)
 
     def __repr__(self):
         return 'NS(%r, %r)' % (
@@ -91,28 +76,28 @@ class NS(Dataset):
         self._config_path = config_path
 
         with open(config_path, 'r') as yaml_file:
-            self._config = yaml.safe_load(yaml_file)['ns_args']
+            self._config = yaml.safe_load(yaml_file)
             self._config['split'] = split
 
         self._map_name = map_name
 
-        self._data_root = data_root = self._config['data_root']
-        version, verbose = self._config['version'], self._config['verbose']
+        self._data_root = data_root = self._config['ns_args']['data_root']
+        version, verbose = self._config['ns_args']['version'], self._config['ns_args']['verbose']
 
         # Useful objects
         self._ns = NuScenes(version, dataroot=data_root, verbose=verbose)
         self.helper = self._helper = PredictHelper(self._ns)
 
         #
-        self._n = self._config['nb_lane_candidates']
-        self._forward_lane = self._config['forward_lane']
-        self._backward_lane = self._config['backward_lane']
-        self._precision_lane = self._config['precision_lane']
+        self._n = self._config['ln_args']['nb_lane_candidates']
+        self._forward_lane = self._config['ns_args']['forward_lane']
+        self._backward_lane = self._config['ns_args']['backward_lane']
+        self._precision_lane = self._config['ns_args']['precision_lane']
 
         # Parameter useful for later
-        self._history_duration = self._config['history_duration']
+        self._history_duration = self._config['ns_args']['history_duration']
         self._lane_coordinates = int((self._forward_lane + self._backward_lane) / self._precision_lane)
-        self._prediction_duration = self._config['prediction_duration']
+        self._prediction_duration = self._config['ns_args']['prediction_duration']
 
         self._nusc_map = NuScenesMap(map_name=self._map_name, dataroot=self._data_root)
 
@@ -121,18 +106,18 @@ class NS(Dataset):
 
         try:
             # raise FileNotFoundError
-            with open('/dev/shm/cached_v10_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v11_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'rb') as f:
                 self._history, self._future, self._lanes, self._neighbors, self._reference_lanes = pickle.load(f)
         except FileNotFoundError:
             self._history, self._future, self._lanes, self._neighbors, self._reference_lanes = self._load()
             content = pickle.dumps([self._history, self._future, self._lanes, self._neighbors, self._reference_lanes])
-            with open('/dev/shm/cached_v10_%s_%s_%d_%d_agents.bin' % (
+            with open('/dev/shm/cached_v11_%s_%s_%d_%d_agents.bin' % (
                     self._map_name, self._config['split'],
                     self._history_duration, self._prediction_duration), 'wb') as f:
                 f.write(content)
-        if self._config['nb_coordinates'] == 2:
+        if self._config['ns_args']['nb_coordinates'] == 2:
             self._history = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._history]
             self._future = [np.array([[x, y] for x, y, _, __, ___ in sim]) for sim in self._future]
             self._neighbors = [np.array([[[x, y] for x, y, _, __, ___ in n] for n in sim]) for sim in self._neighbors]
@@ -144,11 +129,10 @@ class NS(Dataset):
         h_d = self._history_duration
         p_d = self._prediction_duration
 
-        try:
-            agents, samples = loads(open('/dev/shm/cached_agent_v13_%s_%s_%d_%d_agents.bin' % (
-                self._map_name, self._config['split'], h_d, p_d
-            ), 'r').read().strip())
-        except FileNotFoundError:
+        @cached_function('cached_agent_v13_%s_%s_%d_%d_agents.bin' % (
+                self._map_name, self._config['split'], h_d, p_d))
+        def get():
+
             instances = set(i['instance_token'] for i in self._expanded_list)
             associated_samples, availability = dict(), defaultdict(int)
 
@@ -164,15 +148,20 @@ class NS(Dataset):
                         attributes['sample_token'])
 
             # TODO: Change
-            associated_samples = dict((i, j[self._history_duration]) for i, j in associated_samples.items())
             agents = list(filter((lambda x: availability.get(x, -1) > (h_d + p_d + 1)), instances))
+            associated_samples = dict(
+                (i, j[self._history_duration])
+                for i, j in associated_samples.items()
+                if i in agents)
 
-            open('/dev/shm/cached_agent_v13_%s_%s_%d_%d_agents.bin' % (
-                self._map_name, self._config['split'], h_d, p_d
-            ), 'w').write(dumps([agents, [associated_samples[i] for i in agents]]))
-            agents, samples = agents, [associated_samples[i] for i in agents]
-        print('Found %d candidates' % len(agents))
-        return agents, samples
+            return agents, [associated_samples[i] for i in agents]
+
+        @get.after_call
+        def after_call(args):
+            agents, samples = args
+            print('Found %d agents' % len(agents))
+
+        return get()
 
     def _get_full_lanes(self, instance_token: str, sample_token: str, translation=None, rotation=None) -> List[
         np.ndarray]:
@@ -195,8 +184,10 @@ class NS(Dataset):
                 current_agent_past_attributes = self._helper.get_past_for_agent(
                     instance_token, sample_token, self._history_duration * 15, False, False)
                 if not current_agent_past_attributes:
+                    print('No past')
                     return []
             except KeyError:
+                print('KeyError')
                 return []
             current_agent_current_attributes = self._helper.get_sample_annotation(
                 instance_token, sample_token
@@ -222,6 +213,7 @@ class NS(Dataset):
             # If the car leaves the road, then we don't want to deal with it.
             # TODO: Is this necessary?
             if '' in current_agent_past_lanes:
+                print('Far away')
                 return []
             # Concatenate all the roads that are unambiguous (if there is only
             #  one way in, it is most likely the way used by the car)
@@ -317,6 +309,8 @@ class NS(Dataset):
                     #  from the closest lanes instead of connecting lanes).
                     if self._verify_possibility(*full_road, cut_index=len(i)):
                         current_agent_past_lanes.append(full_road)
+                    else:
+                        print('Error')
             else:
                 # In that case this is much easier, as we only have one choice
                 current_agent_past_lanes = [possible_past_timeline]
@@ -354,6 +348,11 @@ class NS(Dataset):
                     if translation is not None and rotation is not None:
                         final_list.append(convert_global_coords_to_local(
                             full_coordinates, translation, rotation))
+                    else:
+                        final_list.append(full_coordinates)
+
+                else:
+                    print('Error')
 
         return final_list
 
@@ -376,9 +375,10 @@ class NS(Dataset):
             future = self._helper.get_future_for_agent(agent, sample, 3600, False, True)
             present = self._helper.get_sample_annotation(agent, sample)['translation'][:2]
             past = [present] + past
-            lane = self._get_full_lanes(agent, sample)
-            plt.plot(*list(zip(*past)), '-g', *list(zip(*future)), '-r', *list(zip(*lane)), '-b')
-            print(lane)
+            lane = self._get_full_lanes(agent, sample, )
+            fig, (ax, *_) = nusc_map.render_record('lane', nusc_map.lane[60]['token'], other_layers=[])
+            ax.plot(*list(zip(*past)), '-g') # , *list(zip(*future)), '-r', *list(zip(*lane)), '-b')
+            print(past)
             plt.show()
 
         raise SystemExit()

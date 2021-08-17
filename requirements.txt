@@ -3,3 +3,6 @@ pyyaml
 tensorboard
 nuscenes-devkit
 numpy
+dill
+matplotlib
+sqlitedict
