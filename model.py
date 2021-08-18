@@ -36,15 +36,13 @@ class LaneNet(nn.Module):
         self.train_flag = self._config['train_flag']
         self.drop = self._config['dropout']
         self.k = self._config['number_of_predictions']
-        self.batch_size = self._ns_config['batch_size']
+        self.batch_size = self._config['batch_size']
         self.tau = self._ns_config['history_duration'] + 1
         self.M = int((self._ns_config['forward_lane'] + self._ns_config['backward_lane']) // (
             self._ns_config['precision_lane']))
-        self.in_size = self._ns_config['nb_columns']
-        self.N = self._ns_config['nb_lane_candidates']
-        self.hidden_size = self._ns_config['hidden_size']
+        self.in_size = self._ns_config['nb_coordinates']
+        self.N = self._config['nb_lane_candidates']
         self.h = self._ns_config['prediction_duration']
-        self.num_heads = self._ns_config['num_heads']
         self.bidirectional = False
         self.nb_coordinates = self._ns_config['nb_coordinates']
 
@@ -125,7 +123,7 @@ class LaneNet(nn.Module):
         self._mtp_fc_shared = torch.nn.ModuleList([torch.nn.Linear(in_features=256, out_features=256),
                                                    torch.nn.Linear(in_features=256, out_features=self.h * self.nb_coordinates)])
 
-
+        self.double()
 
 
     def _tfe_history(self, history):  # history: [B, tau, nb_coordinates]
@@ -206,7 +204,7 @@ class LaneNet(nn.Module):
         layer5 = self.la_fc5(layer4)
         layer6 = self.la_fc6(layer5)
         layer7 = self.la_fc7(layer6)
-        t = True
+        t = False
         if t:
             #out = torch.cat([torch.cat(eps, 1), tfe_history], 1)
             res = torch.unsqueeze(self.tfe_fc_6(tfe_history), 0)
@@ -246,5 +244,5 @@ class LaneNet(nn.Module):
             for index, lane in enumerate(lane_predictions):
                 lane_predictions[index] = layer(lane)
 
-        return torch.stack(lane_predictions), layer7
+        return torch.stack(lane_predictions).float(), layer7.float()
 

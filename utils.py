@@ -21,16 +21,16 @@ from model import LaneNet
 # Get arguments
 config_file = 'config.yml'
 with open(config_file, 'r') as yaml_file:
-    config = yaml.safe_load(yaml_file)['ns_args']
+    config = yaml.safe_load(yaml_file)
 
-batch_size = config['batch_size']
+batch_size = config['ln_args']['batch_size']
 
 
 # Loss function
 def dist(point, lane):
-    #the distance from the point `point` to the lane `lane`
+    # the distance from the point `point` to the lane `lane`
     # TODO: Is it a good idea?
-    x, y, *z = point #.detach().numpy()
+    x, y, *z = point  # .detach().numpy()
     # The first step is to get the closest coordinates in the
     #  lane
     # TODO: See if we can finer than that
@@ -39,7 +39,7 @@ def dist(point, lane):
     closest_x = -np.inf
     closest_y = -np.inf
     closest_distance = np.inf
-    for x_lane, y_lane, *z in lane: #.detach().numpy():
+    for x_lane, y_lane, *z in lane:  # .detach().numpy():
         distance = math.sqrt(
             math.pow(x - x_lane, 2) +
             math.pow(y - y_lane, 2))
@@ -50,8 +50,8 @@ def dist(point, lane):
     xc, yc = x - closest_x, y - closest_y
     return math.sqrt(xc * xc + yc * yc)
 
-def threshold_distance(v_hat_t_k_i, v_t_i, l_ref_t):
 
+def threshold_distance(v_hat_t_k_i, v_t_i, l_ref_t):
     if dist(v_hat_t_k_i, l_ref_t) > dist(v_t_i, l_ref_t):
         return dist(v_hat_t_k_i, l_ref_t)
     else:
@@ -59,8 +59,6 @@ def threshold_distance(v_hat_t_k_i, v_t_i, l_ref_t):
 
 
 def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel, l1_loss, out_la):
-
-
     # TODO: Make sure we don't detach the wrong thingsAdding h
     # Internal functions
 
@@ -68,7 +66,7 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
 
     reference_lane = []
     for index, reference_index in enumerate(reference_indices):
-        reference_lane.append(all_lanes[index][reference_index])
+        reference_lane.append(all_lanes[index][int(reference_index)])
     reference_lane = torch.stack(reference_lane)
 
     # Note: the variables v and v_hat depends on the index t,
@@ -81,16 +79,14 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
     # The amount of coordinates in a lane
     M: int = all_lanes.shape[2]
 
-    v_hat = v_hat.reshape(B, K, h, 2) # 2 : nb coordinates
+    v_hat = v_hat.reshape(B, K, h, 2)  # 2 : nb coordinates
     print('Entering get_loss')
-
 
     # lane_ref: B x M x 2
     # v_hat: B x K x h x 2
     # v: B x h x 2
     # all_lanes: B x N x M x 2
     # TODO: See all places where I used reshape instead of permute
-
 
     # Defined as the cross-entropy loss for selecting the reference
     #  lane from the lane candidates.
@@ -99,9 +95,10 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
     # print(reference_lane.shape, reference_lane.shape)
 
     # If reference_lane is first
-    # target = torch.empty(B, 2, dtype=torch.long).random_(5)
+    target = torch.tensor(reference_indices.clone().detach().requires_grad_(True), dtype=torch.long)
 
-    loss_cls = cel(out_la, reference_indices)
+    loss_cls = cel(out_la, target)#.float()
+
 
     # If reference_lane is last
     # target = torch.empty(B, 2, dtype=torch.long).random_(5)
@@ -194,18 +191,22 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
         # We reshape them to have the dimension last
         #  so we can easily extract the coordinates
 
-        #v_hat_t_k = torch.permute(v_hat_t_k.reshape((2, h,)), (1, 0))
+        # v_hat_t_k = torch.permute(v_hat_t_k.reshape((2, h,)), (1, 0))
 
-        #v_t = torch.permute(v_t.reshape((2, h,)), (1, 0))
+        # v_t = torch.permute(v_t.reshape((2, h,)), (1, 0))
 
-        #l_ref_t = torch.permute(l_ref_t.reshape((2, M,)), (1, 0))
+        # l_ref_t = torch.permute(l_ref_t.reshape((2, M,)), (1, 0))
 
         # ############################################
         # We return the sum for all the points.
-        return sum(threshold_distance(*i, l_ref_t) for i in zip(v_hat_t_k, v_t)) / h
+        res = sum(threshold_distance(*i, l_ref_t) for i in zip(v_hat_t_k, v_t)) / h
+
+        return res
 
     def get_loss_pred_t_k(t, k):
-        return l1_loss(v_hat[t][k], v[t]) # * beta  + (1 - beta) * get_loss_lane_off(t, k)
+        res = l1_loss(v_hat[t][k], v[t]) * beta + (1 - beta) * get_loss_lane_off(t, k)
+
+        return res
 
     loss_pred_t = []
     loss_pred_k = []
@@ -216,7 +217,9 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
 
     loss_pred = sum(
         loss_pred_t) / B  # sum(min(get_loss_pred_t_k(t, k) for k in range(K)) for t in tqdm(list(range(B))))
-    return alpha * loss_pred + (1 - alpha) * loss_cls
+    loss = alpha * loss_pred + (1 - alpha) * loss_cls
+
+    return loss.type(torch.float32)
 
 
 # Metrics
@@ -263,6 +266,9 @@ def collate_fn(batch):
             # Then generate as many filler rows as I should to get the correct batch size
             batch.extend([tuple(np.zeros(shape) for shape in shapes) for _ in range(tail)])
         for index in range(len(batch[0])):
+            # for row in batch:
+            #     print(index, row[index].shape)
+            print([row[index] for row in batch][0])
             yield torch.tensor(np.array([row[index] for row in batch]))
 
     return list(iterate())

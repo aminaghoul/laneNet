@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from main import NS
+from main_bis import get_dataset as Dataset
 from model import LaneNet
 
 
@@ -35,10 +35,10 @@ def do_something(what):
     print('\r' + what + '...done (in %s)' % timedelta(seconds=time() - begin))
 
 
-class SuperNS(Dataset):
+"""class SuperNS(Dataset):
     # TODO: Add more parameters as well as more
     #  attributes to this.
-    def __init__(self, split='mini_train'):
+    def __init__(self, split='train'):
         self.__ns = list(NS.every_map('config.yml', split))
         self.__items = list(chain.from_iterable(self.__ns))
         shuffle(self.__items)
@@ -52,7 +52,7 @@ class SuperNS(Dataset):
     def __getitem__(self, item):
         # This is the list of every element of
         #  every datasets
-        return self.__items[item]
+        return self.__items[item]"""
 
 
 def show_trace(interval, limit=None):
@@ -84,7 +84,7 @@ def main_loop():
     #  use to get all the scenes from all
     #  the maps.
     with do_something('Initializing the DataSet'):
-        tr_set = SuperNS('mini_train')
+        tr_set = Dataset()
 
     # TODO: Do something like the following, with a
     #  training set, a validation set and a testing
@@ -98,7 +98,7 @@ def main_loop():
         config_file = 'config.yml'
         prediction_config_file = 'prediction_cfg.json'
         with open(config_file, 'r') as yaml_file:
-            config = yaml.safe_load(yaml_file)['ns_args']
+            config = yaml.safe_load(yaml_file)
         # with open(prediction_config_file, 'r') as f:
         #     pred_config = json.load(f)
         #     # TODO: Typo?
@@ -107,12 +107,12 @@ def main_loop():
     #     pred_config = PredictionConfig.deserialize(pred_config, tr_set.helper)
 
     # We then extract parameters from them
-    batch_size = config['batch_size']
-    _K = config['number_of_predictions']
-    h = config['prediction_duration']
-    num_epochs = config['num_epochs']
-    alpha = config['alpha']
-    beta = config['beta']
+    batch_size = config['ln_args']['batch_size']
+    _K = config['ln_args']['number_of_predictions']
+    h = config['ns_args']['prediction_duration']
+    num_epochs = config['ln_args']['num_epochs']
+    alpha = config['ln_args']['alpha']
+    beta = config['ln_args']['beta']
 
     # We then define the helpers
 
@@ -121,17 +121,18 @@ def main_loop():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     # Tensorboard summary writer
-    writer = SummaryWriter(log_dir=config['log_dir'])
+    # writer = SummaryWriter(log_dir=config['log_dir'])
 
     print('Initializing the data loader...', end='', flush=True)
     tr_dl = DataLoader(tr_set, batch_size=batch_size, shuffle=False, num_workers=8, collate_fn=collate_fn)
-
+    print(len(tr_dl))
+    exit()
     print('done')
 
     # Initialize Models:
     print('Initializing models...', end='', flush=True)
     net = LaneNet('config.yml').float().to(device)
-    print("net : ", net)
+    #print("net : ", net)
     print('done')
 
     print('Initializing losses...', end='', flush=True)
@@ -141,11 +142,11 @@ def main_loop():
 
     # Initialize Optimizer:
     print('Initializing the optimizer...', end='', flush=True)
-    #optimizer = torch.optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
-    #scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=1.0)
-    optimizer = torch.optim.SGD(params=net.parameters(), lr=config['lr'])
-    steps = 20
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
+    # optimizer = torch.optim.Adam(net.parameters(), lr=config['lr'], weight_decay=config['weight_decay'])
+    # scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=1.0)
+    optimizer = torch.optim.SGD(params=net.parameters(), lr=config['ln_args']['lr'])
+    # steps = 20
+    # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
     """elif hyperparams['learning_rate_style'] == 'exp':
         lr_scheduler[node_type] = optim.lr_scheduler.ExponentialLR(optimizer[node_type],
                                                                    gamma=hyperparams['learning_decay_rate'])"""
@@ -158,15 +159,15 @@ def main_loop():
             start_epoch = previous_state['epoch']
             val_loss = previous_state['loss']
             min_val_loss = previous_state['min_val_loss']
-            #optimizer.load_state_dict(optimizer.state_dict())
-            #net.load_state_dict( net.state_dict())
+            optimizer.load_state_dict(previous_state['optimizer_state_dict'])
+            net.load_state_dict(previous_state['model_state_dict'])
 
         except FileNotFoundError:
             start_epoch = 0
             val_loss = math.inf
             min_val_loss = math.inf
-            #optimizer.state_dict()
-            #net.state_dict()
+            optimizer.state_dict()
+            net.state_dict()
 
     print('Initialized')
 
@@ -190,16 +191,20 @@ def main_loop():
         # Variables to track training performances
         # ...
 
-        for i, (history, future, lanes, neighbors, reference_lane) in enumerate(tr_dl):
+        for i, (history, future, neighbors, lanes, reference_lane, translation, rotation) in enumerate(tr_dl):
             print('Step ', i, '/', len(tr_dl))
-            if i == steps:
-                break
+            """ 
+           reference_lane: np.array = torch.tensor(list(
+                int(i) for i in reference_lane.clone().detach().flatten()
+            )
+            """
 
-            # history : B x tau x 2
+
+            # history : B x (tau+1) x 2
             # lanes : B x N x M x 2
-            # neighbors : B x N x tau x 2
+            # neighbors : B x N x (tau+1) x 2
             # v : future : B x h x 2
-            # reference_lane : B x M x 2
+            # reference_lane : B x 1
 
             # We start by preprocessing the inputs
             history = torch.permute(history.float().to(device), (0, 2, 1))
@@ -209,50 +214,49 @@ def main_loop():
             # lanes :  N x B x 2 x M
             # neighbors :  N x B x 2 x tau
 
+            reference_lane = torch.squeeze(reference_lane.float().to(device), dim=1)
+
             v = torch.flatten(future, start_dim=1)
             v = v.float().to(device)
-
             # v : future : B x (h x 2)
 
             # Then we do a forward pass
-
             predict, out_la = net(history, lanes, neighbors)
 
             # predict : K x B x (hx2)
-            print('predshape : ', predict.shape)
+
 
             v_hat = predict.permute(1, 0, 2)
             # v_hat : B x K x (hx2)
 
             # Then we calculate the losses
             optimizer.zero_grad()
-            loss_total = l1_loss(predict[0], v)
-            """loss_total = get_loss(
-                v_hat=v_hat,
-                reference_indices=reference_lane,
+            # loss_total = l1_loss(predict[0], v)
+            loss_total = get_loss(
+                v_hat=v_hat.type(torch.float32),
+                reference_indices=reference_lane.type(torch.float32),
                 alpha=alpha,
                 beta=beta,
-                v=future, h=h,
-                all_lanes=lanes,
+                v=future.type(torch.float32), h=h,
+                all_lanes=lanes.type(torch.float32),
                 device=device,
                 l1_loss=l1_loss,
                 cel=cel, out_la=out_la
-            )"""
+            )
             loss.append(loss_total)
 
             print('Loss:', loss_total)
-
+            #loss_total = loss_total.float()
             loss_total.backward()
-            #torch.nn.utils.clip_grad_value_(net.parameters(), 1.0)
+            # torch.nn.utils.clip_grad_value_(net.parameters(), 1.0)
             optimizer.step()
-            scheduler.step()
-            all_lanes = lanes.permute(1, 0, 3, 2)
+            #scheduler.step()
+            all_lanes = lanes.permute(1, 0, 3, 2).type(torch.long)
 
             reference = []
-            for index, reference_index in enumerate(reference_lane):
+            for index, reference_index in enumerate(reference_lane.type(torch.long)):
                 reference.append(all_lanes[index][reference_index])
             reference = torch.stack(reference).permute(0, 2, 1)
-
 
             index = 0
             try:
@@ -305,11 +309,11 @@ def main_loop():
             print("ADE", np.min(batch_error_dict['ade']))  # sum(map(ade_t, range(B))) / B)
             print("FDE", np.min(batch_error_dict['fde']))  # sum(map(fde_t, range(B))) / B)
 
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
+        #scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
         torch.save({
             'epoch': epoch,
-            #'model_state_dict': net.state_dict(),
-            #'optimizer_state_dict': optimizer.state_dict(),
+            'model_state_dict': net.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
             'loss': val_loss,
             'min_val_loss': min(val_loss, min_val_loss),
             'ade': eval_ade_batch_errors,
@@ -321,6 +325,7 @@ def main_loop():
     plt.plot(loss, label="loss")
     plt.legend()
     plt.show()
+
 
 if __name__ == '__main__':
     show_trace(60, 1)

@@ -1,6 +1,6 @@
 ns_args:
   data_root: 'nuscenes'
-  version: 'v1.0-mini'
+  version: 'v1.0-trainval'
   split: 'mini_train'
   verbose: yes
   history_duration: 4 # tau
