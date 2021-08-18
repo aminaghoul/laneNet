@@ -194,6 +194,7 @@ class Scene:
                 reference_point - int(BACKWARD_DISTANCE * 100),
                 reference_point + int(FORWARD_DISTANCE * 100),
                 int(PRECISION_LANE * 100))])
+            print('Lane added: shape:', np.array(self._lanes_coordinates[-1]).shape)
 
         nu = (lambda j: j + 1)
         d = (lambda l: sum(min(np.linalg.norm(c - m) for m in l[1]) * nu(i) for i, c in enumerate(self._ego_future)))
