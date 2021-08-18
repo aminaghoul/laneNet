@@ -194,6 +194,7 @@ class Scene:
                 reference_point - int(BACKWARD_DISTANCE * 100),
                 reference_point + int(FORWARD_DISTANCE * 100),
                 int(PRECISION_LANE * 100))])
+            print('Lane added: shape:', np.array(self._lanes_coordinates[-1]).shape)
 
         nu = (lambda j: j + 1)
         d = (lambda l: sum(min(np.linalg.norm(c - m) for m in l[1]) * nu(i) for i, c in enumerate(self._ego_future)))
@@ -439,6 +440,8 @@ def get_dataset():
             for scene in tqdm(list(sorted(nusc.scene, key=(lambda x: x['name'])))):
                 try:
                     all_columns[scene['name']]
+                    raise KeyError
+
                 except KeyError:
                     try:
                         all_columns[scene['name']] = Scene(scene).columns
@@ -455,19 +458,33 @@ def get_dataset():
             if len(lanes) < n:
                 try:
                     lanes = np.concatenate((lanes, np.zeros((n - len(lanes), M, 2))))
+                    print(lanes.shape)
                 except ValueError:
-                    print(lanes)
+                    continue
                     raise
 
             if len(neighbors) < n:
                 neighbors = np.concatenate((neighbors, np.zeros((n - len(neighbors), tau + 1, 2))))
-            history = np.zeros((tau + 1, 2))
-            future = np.zeros((h, 2))
-            neighbors = np.zeros((n, tau + 1, 2))
-            lanes = np.zeros((n, M, 2))
+                print(neighbors.shape)
+            if len(history) < tau+1:
+                history = np.concatenate((history, np.zeros((tau+1 - len(history), 2))))
+                print(history.shape)
 
-            translation = np.zeros((3,))
-            rotation = np.zeros((4,))
+            if len(future) < h:
+                future = np.concatenate((future, np.zeros((h - len(future), 2))))
+                print(future.shape)
+            if len(future) < h:
+                future = np.concatenate((future, np.zeros((h - len(future), 2))))
+                print(future.shape)
+
+            #history = np.zeros((tau + 1, 2))
+            #future = np.zeros((h, 2))
+            #neighbors = np.zeros((n, tau + 1, 2))
+            #lanes = np.zeros((n, M, 2))
+
+            #translation = np.zeros((3,))
+            #rotation = np.zeros((4,))
+
             yield history, future, neighbors, lanes, reference_lane, translation, rotation
             '''\
                 np.array(history, dtype=np.float64),

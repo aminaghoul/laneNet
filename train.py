@@ -125,8 +125,7 @@ def main_loop():
 
     print('Initializing the data loader...', end='', flush=True)
     tr_dl = DataLoader(tr_set, batch_size=batch_size, shuffle=False, num_workers=8, collate_fn=collate_fn)
-    print(len(tr_dl))
-    exit()
+
     print('done')
 
     # Initialize Models:
@@ -155,7 +154,7 @@ def main_loop():
 
         try:
             previous_state = torch.load('current_state.bin')
-            print(previous_state)
+
             start_epoch = previous_state['epoch']
             val_loss = previous_state['loss']
             min_val_loss = previous_state['min_val_loss']
@@ -274,10 +273,10 @@ def main_loop():
                         target_x.append(x)
                     args = [target_x, target_y, '-']
                     target_x, target_y, *z = t_future.permute(1, 0)
-                    args.extend([target_x, target_y, '*'])
+                    args.extend([target_x, target_y, '-'])
 
                     l_x, l_y, *z = ref
-                    args.extend([l_x, l_y, '*'])
+                    args.extend([l_x, l_y, '-'])
 
                     for neighbor in t_neighbors:
                         neighbors_x, neighbors_y = [], []
@@ -291,7 +290,7 @@ def main_loop():
                         # print(t_k_predict.reshape((2, h)).shape)
                         t_k__predict = t_k_predict.reshape((2, h))
                         predictions_x, predictions_y, *z = t_k__predict
-                        args.extend([predictions_x.detach().numpy(), predictions_y.detach().numpy(), '*'])
+                        args.extend([predictions_x.detach().numpy(), predictions_y.detach().numpy(), '-'])
                         """for xx, yy in zip(x, y):
                             predictions_x.append(xx)
                             predictions_y.append(yy)
