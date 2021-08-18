@@ -497,5 +497,5 @@ def get_dataset():
 
 
 if __name__ == '__main__':
-    #get_nusc()
+    get_nusc()
     get_dataset()
