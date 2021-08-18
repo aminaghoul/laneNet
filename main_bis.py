@@ -201,6 +201,19 @@ class Scene:
 
         self._lanes_coordinates = np.array(list(convert_global_coords_to_local(
             np.array(i), translation, rotation) for i in self._lanes_coordinates))
+        def get_shape(thing, *shape):
+            if isinstance(thing, (np.ndarray, torch.tensor)):
+                shape = (*shape, *thing.shape)
+                return get_shape(thing[0], *shape)
+            if isinstance(thing, (list, set, tuple)):
+                shape = (*shape, len(thing))
+                sizes = [len(i)  if isinstance(i, (list, set, tuple)) else 0 for i in thing]
+                return get_shape(thing[0], *shape, (min(sizes), max(sizes)), '...')
+            return shape
+                
+        
+        print('Lanes shape', (self._lanes_coordinates).shape)
+        print('Lanes shape', get_shape(self._lanes_coordinates))
         self._neighbors = np.array(list(convert_global_coords_to_local(
             i, translation, rotation) for i in self._neighbors))
         self._ego_history = convert_global_coords_to_local(self._ego_history, translation, rotation)
