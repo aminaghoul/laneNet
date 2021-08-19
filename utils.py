@@ -270,8 +270,11 @@ def collate_fn(batch):
             # for row in batch:
             #     print(index, row[index].shape)
             print([row[index].shape for row in batch])
-            if index == 2:
-                raise ValueError(batch[0][index][0])
+            # We forgot to remove the extra dimension
+            if index == 2 and len(batch[0][index].shape) == 4:
+                # [6, 20, 1, 2] -> [6, 20, 2]
+                for row_index, row in enumerate(batch):
+                    row[index] = np.array([[j[0] for j in i] for i in row[index]])
             try:
                 print('Index', index)
                 if len(set(row[index].shape for row in batch)) != 1:
