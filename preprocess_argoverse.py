@@ -1,4 +1,5 @@
 import math
+from contextlib import suppress
 from os.path import expanduser
 from random import randrange
 from typing import Tuple
@@ -650,6 +651,14 @@ def get_items():
             translation = np.array(history[-1])
             transform = get_rot(*history[-2:])
             if len(lanes.shape) == 1:
+                with suppress(BaseException):
+                    print('0', lanes[0].shape)
+                with suppress(BaseException):
+                    print('0.0', lanes[0][0].shape)
+                with suppress(BaseException):
+                    print('0.0.0', lanes[0][0][0].shape)
+                with suppress(BaseException):
+                    print('0.0.0.0', lanes[0][0][0][0].shape)
                 raise ValueError(lanes.shape)
             yield history, future, neighbors, lanes, np.array([reference_lane]), translation, transform
 
