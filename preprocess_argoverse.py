@@ -655,8 +655,6 @@ def get_items():
             translation = np.array(history[-1])
             transform = get_rot(*history[-2:])
             lanes = np.array([i[0] for i in lanes])
-            print(lanes[0])
-            raise ValueError
             yield history, future, neighbors, lanes, np.array([reference_lane]), translation, transform
 
             '''nu = (lambda j: j + 1)
