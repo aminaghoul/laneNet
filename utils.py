@@ -269,9 +269,16 @@ def collate_fn(batch):
             # for row in batch:
             #     print(index, row[index].shape)
             print([row[index].shape for row in batch])
-            if len(set(row[index].shape for row in batch)) != 1:
-                mini, = [row[index] for row in batch if len(row[index].shape) < len(batch[0][index].shape)]
-                print(mini, mini.shape, [i.shape for i in mini])
+            try:
+                if len(set(row[index].shape for row in batch)) != 1:
+                    mini, = [row[index] for row in batch if len(row[index].shape) < len(batch[0][index].shape)]
+                    print(mini, mini.shape, [i.shape for i in mini])
+                    raise RuntimeError()
+            except ValueError:
+                print(batch[0][index])
+                print(batch[0][index][0])
+                print(batch[0][index][0][0])
+                print(batch[0][index][0][0][0])
                 raise RuntimeError()
             yield torch.tensor(np.array([row[index] for row in batch]))
 
