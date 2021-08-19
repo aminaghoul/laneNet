@@ -5,12 +5,15 @@ from typing import List, Iterator, Generator
 
 import numpy as np
 import yaml
+from nuscenes.eval.common.utils import quaternion_yaw
 from nuscenes.map_expansion import arcline_path_utils
 from nuscenes.map_expansion.map_api import NuScenesMap
 
 from nuscenes.nuscenes import NuScenes
 
 from matplotlib import pyplot as plt
+from nuscenes.prediction.helper import angle_of_rotation, make_2d_rotation_matrix
+from pyquaternion import Quaternion
 from sqlitedict import SqliteDict
 from torch.utils.data import Dataset
 from tqdm import tqdm
@@ -204,17 +207,17 @@ class Scene:
 
         self._lanes_coordinates = np.array(list(convert_global_coords_to_local(
             np.array(i), translation, rotation) for i in self._lanes_coordinates))
+
         def get_shape(thing, *shape):
             if isinstance(thing, (np.ndarray, torch.tensor)):
                 shape = (*shape, *thing.shape)
                 return get_shape(thing[0], *shape)
             if isinstance(thing, (list, set, tuple)):
                 shape = (*shape, len(thing))
-                sizes = [len(i)  if isinstance(i, (list, set, tuple)) else 0 for i in thing]
+                sizes = [len(i) if isinstance(i, (list, set, tuple)) else 0 for i in thing]
                 return get_shape(thing[0], *shape, (min(sizes), max(sizes)), '...')
             return shape
-                
-        
+
         print('Lanes shape', (self._lanes_coordinates).shape)
         print('Lanes shape', get_shape(self._lanes_coordinates))
         self._neighbors = np.array(list(convert_global_coords_to_local(
@@ -515,9 +518,10 @@ def _get_dataset():
             # translation = np.zeros((3,))
             # rotation = np.zeros((4,))
 
-            print(tuple(map(type, (history, future, neighbors, lanes, reference_lane, translation, rotation))))
-
-            yield history, future, neighbors, lanes, reference_lane, np.array(translation), np.array(rotation)
+            yaw = angle_of_rotation(quaternion_yaw(Quaternion(rotation)))
+            transform = make_2d_rotation_matrix(angle_in_radians=yaw)
+            print(tuple(map(type, (history, future, neighbors, lanes, reference_lane, translation, transform))))
+            yield history, future, neighbors, lanes, reference_lane, np.array(translation), np.array(transform)
             '''\
                 np.array(history, dtype=np.float64),
                 
