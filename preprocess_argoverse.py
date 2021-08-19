@@ -888,13 +888,12 @@ def main():
         try:
             cache[afl_index] = process_item(afl[afl_index])
             cache.commit()
-            for item in [afl[afl_index]]:
-                continue
 
         except NotEnoughPoints as e:
             print('Error in', afl_index, *e.args)
         except Exception as e:
             print(e)
+            raise
         else:
             print('Success', afl_index)
 
