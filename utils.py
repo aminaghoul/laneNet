@@ -274,6 +274,7 @@ def collate_fn(batch):
             if index == 2 and len(batch[0][index].shape) == 4:
                 # [6, 20, 1, 2] -> [6, 20, 2]
                 for row_index, row in enumerate(batch):
+                    batch[row_index] = row = list(row)
                     row[index] = np.array([[j[0] for j in i] for i in row[index]])
             try:
                 print('Index', index)
