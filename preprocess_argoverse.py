@@ -893,7 +893,6 @@ def main():
             print('Error in', afl_index, *e.args)
         except AssertionError as e:
             print(e)
-            raise
         except Exception as e:
             print(e)
             raise
