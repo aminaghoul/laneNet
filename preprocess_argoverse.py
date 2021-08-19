@@ -2,29 +2,33 @@ import math
 from contextlib import suppress
 from os.path import expanduser
 from random import randrange
-from typing import Tuple
+from typing import Tuple, Optional
 
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 from argoverse_api.argoverse.data_loading.argoverse_forecasting_loader import ArgoverseForecastingLoader
 
-from argoverse_api.argoverse.map_representation.map_api import ArgoverseMap
 # from argoverse_forecasting.utils.map_features_utils import MapFeaturesUtils
 
 from csv import reader as csv_reader
 import numpy as np
 import pandas as pd
 
-show = True
+show = False
 
 if not show:
     from argoverse_forecasting.utils.map_features_utils import MapFeaturesUtils
-
-    am = ArgoverseMap()
+    from argoverse_api.argoverse.map_representation.map_api import ArgoverseMap
 else:
-    MapFeaturesUtils = None
-    am = None
+    class MapFeaturesUtils:
+        pass
+
+
+    class ArgoverseMap:
+        pass
+
+am = ArgoverseMap()
 
 ##set root_dir to the correct path to your dataset folder
 # root_dir = 'argoverse_api/forecasting_sample/data/'
@@ -682,9 +686,193 @@ def get_items():
     return list(generate())
 
 
+def deprecated(item):
+    """sequence_iterator = iter(item.seq_df)
+    headers = next(sequence_iterator)
+    for row in sequence_iterator:
+        print(dict(zip(headers, row)))"""
+
+    print(item.current_seq)
+
+    for timestamp in set(item.seq_df['TIMESTAMP']):
+        timestamp_coordinate = []
+        for other in others:
+            print((item.seq_df['TIMESTAMP'] == timestamp))
+            raise RuntimeError(
+                item.seq_df[(item.seq_df['TIMESTAMP'] == timestamp)]['TRACK_ID'] == other
+            )
+    raise RuntimeError
+
+    others_histories = []
+    for other in others:
+        others_histories.append((
+            item.seq_df[item.seq_df["TRACK_ID"] == other]["X"][:HISTORY_SIZE + 1],
+            item.seq_df[item.seq_df["TRACK_ID"] == other]["Y"][:HISTORY_SIZE + 1]))
+        print(others_histories[-1][0].shape, others_histories[-1][0].shape)
+    others_histories = np.array(others_histories)  # 44 x 2
+
+    agent_x = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["X"]
+    agent_y = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["Y"]
+    agent_full = np.column_stack((agent_x, agent_y))
+
+    current_coordinates = np.array([list(agent_x)[HISTORY_SIZE], list(agent_y)[HISTORY_SIZE]])
+
+    agent_x = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["X"][HISTORY_SIZE + 1:][:PREDICTION_SIZE]
+    agent_y = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["Y"][HISTORY_SIZE + 1:][:PREDICTION_SIZE]
+    agent_future, agent_future_bis = np.column_stack((agent_x, agent_y)), [agent_x, agent_y]
+
+    for all_x, all_y in others_histories:
+        for (x, y) in zip(all_x, all_y):
+            print(x, y)
+            exit()
+        am.get_lane_segments_containing_xy()
+
+    args = []
+    for lane in am.get_candidate_centerlines_for_traj(agent_full, item.city, False):
+        args.extend(np.array(list(zip(*lane))))
+    plt.plot(*agent_future_bis, *agent_history_bis, *args)
+    plt.show()
+
+    # agent_traj = np.column_stack((agent_x, agent_y))
+
+    # print(track_id)
+
+
+# am.get_nearest_centerline(item.agent_traj[0], item.city, False)
+
+
+def process_item(item):
+    track_id, = list(set(item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]['TRACK_ID']))
+    others = sorted(list(set(item.seq_df[item.seq_df["OBJECT_TYPE"] != "AGENT"]['TRACK_ID'])))
+    neighbors_df = item.seq_df[item.seq_df["OBJECT_TYPE"] != "AGENT"]
+    all_track_ids = [track_id] + others
+
+    # First step, read the file
+    data = read_csv_into_dict(item.current_seq)
+    full_coordinates = get_full_coordinates(data, all_track_ids)
+    presences, distances = get_presence_and_distance(full_coordinates)
+
+    def is_stationary(list_of_velocities):
+        sorted_vel = sorted(list_of_velocities)
+        threshold_vel = sorted_vel[STATIONARY_THRESHOLD]
+        return threshold_vel < VELOCITY_THRESHOLD
+
+    full_coordinates = pad_coordinates(full_coordinates)
+    stationary = list(map(is_stationary, np.transpose(get_velocities(full_coordinates, sorted(data)))))
+    neighbors_indices, neighbors = filter_nearest_neighbors(
+        full_coordinates, distances, stationary,
+        tau=HISTORY_SIZE + PREDICTION_SIZE)
+
+    _ = neighbors_indices.pop(0)
+    try:
+        assert not _, (_, neighbors_indices)
+    except AssertionError:
+        raise NotEnoughPoints('Unknown error')
+    target_history = [i.pop(0) for i in neighbors][:HISTORY_SIZE]
+    target_future = [i[0] for i in full_coordinates][20:]
+    assert len(target_future) == PREDICTION_SIZE, len(target_future)
+
+    rot = get_rot(*target_history[-2:])
+
+    # df = pd.read_csv(item.current_seq, dtype={"TIMESTAMP": str})
+    # agent_track = df[df["OBJECT_TYPE"] == "AGENT"].values
+    # Social features are computed using only the observed trajectory
+    # social_features = compute_social_features(
+    #     df, agent_track, HISTORY_SIZE, HISTORY_SIZE + PREDICTION_SIZE, RAW_DATA_FORMAT)
+    # Track groups
+
+    # show_trajectory(target_history, target_future, )  # list(zip(x, y)), )
+    local_history = convert_global_coords_to_local(target_history, target_history[-1], rot)
+    local_future = convert_global_coords_to_local(target_future, target_history[-1], rot)
+    global_n_plus = np.full((N, HISTORY_SIZE + PREDICTION_SIZE, 2), np.nan)
+    global_n = np.zeros((N, HISTORY_SIZE, 2))  # [[] for i in range(len(neighbors[0]))]  # 6 x 20
+    for ts_index, time_step in list(enumerate(neighbors)):  # x 20
+        if ts_index < HISTORY_SIZE:
+            for index, neighbor in enumerate(time_step):  # x 6
+                global_n[index, ts_index, 0] = neighbor[0]
+                global_n[index, ts_index, 1] = neighbor[1]
+        for index, neighbor in enumerate(time_step):  # x 6
+            global_n_plus[index, ts_index, 0] = neighbor[0]
+            global_n_plus[index, ts_index, 1] = neighbor[1]
+
+    def f(x, full):
+        exception = NotEnoughPoints()
+        possibilities = []
+        for y in fu.get_candidate_centerlines_for_trajectory(
+                full, item.city, am,
+                viz=False, seq_len=90,
+                max_search_radius=5):
+            try:
+                possibilities.append(cut_lanes(y, x))
+            except NotEnoughPoints as g:
+                exception = g
+        if not possibilities:
+            raise exception
+        return possibilities
+
+    def convert(thing):
+        # [N, ?, ?, 2]
+        return convert_global_coords_to_local(thing, target_history[-1], rot)
+
+    global_lanes = np.array([f(*i) for i in zip(global_n, global_n_plus)])
+    local_neighbors = np.array([list(map(convert, i)) for i in global_n])
+    local_lanes = np.array([list(map(convert, i)) for i in global_lanes])
+    agent_x = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["X"][:HISTORY_SIZE + 1]
+    agent_y = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["Y"][:HISTORY_SIZE + 1]
+    agent_history, agent_history_bis = np.column_stack((agent_x, agent_y)), [agent_x, agent_y]
+    agent_x = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["X"]
+    agent_y = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["Y"]
+    global_lane = f(np.array(list(zip(agent_x, agent_y))), agent_history)
+    local_lane = list(map(convert, global_lane))
+
+    nu = (lambda j: j + 1)
+    d = (lambda l: sum(min(np.linalg.norm(c - m) for m in l) * nu(i) for i, c in enumerate(local_future)))
+    m, n = sorted(enumerate(local_lanes), key=(lambda k: d(k[1])))[0]
+
+    # show_trajectory(local_history, local_future, *local_neighbors[0], *local_lanes[0])
+    # show_trajectory(local_history, local_future, local_lane)
+
+    return dict(
+        history=local_history,
+        future=local_future,
+        neighbors=local_neighbors,
+        lanes=local_lanes,
+        neighbors_indices=neighbors_indices,
+        distances=distances,
+        stationary=stationary,
+        presences=presences,
+        reference_lane_index=m,
+        reference_lane_coordinates=n,
+        local_lane=local_lane)
+
+
+"""
+    def f(x):
+        return cut_lanes(x[0], None)
+
+    global_lanes = np.array([f(am.get_candidate_centerlines_for_traj(i, item.city, False)) for i in global_n])
+    global_lane = f(am.get_candidate_centerlines_for_traj(np.array(list(zip(agent_x, agent_y))), item.city, False))
+    print(np.array(global_lanes).shape, np.array(global_n).shape)
+    local_neighbors = np.array([convert_global_coords_to_local(i, target_history[-1], rot) for i in global_n])
+    local_lanes = np.array([convert_global_coords_to_local(i, target_history[-1], rot) for i in global_lanes])
+    local_lane = convert_global_coords_to_local(global_lane, target_history[-1], rot)"""
+
+# show_trajectory(local_history, local_future, *local_neighbors, *local_lanes)
+# show_trajectory(local_history, local_future, local_lane)
+# print(local_lane.shape)
+# print(local_lanes.shape)
+# raise ValueError()
+
+# print(neighbors_indices, )
+
+fu: Optional[MapFeaturesUtils] = None
+afl: Optional[ArgoverseForecastingLoader] = None
+
+
 def main():
+    global fu, afl
     vels_neighbors = []
-    if ArgoverseForecastingLoader is not None:
+    if not show:
         afl = ArgoverseForecastingLoader(root_dir)
         fu = MapFeaturesUtils()
     else:
@@ -693,204 +881,15 @@ def main():
     for afl_index in tqdm(range(len(afl))):
         # afl_index = randrange(len(afl))
         if afl_index in cache:
-            if afl_index in cache:
-                """dict(
-                    history=local_history,
-                    future=local_future,
-                    neighbors=local_neighbors,
-                    lanes=local_lanes,
-                    neighbors_indices=neighbors_indices,
-                    distances=distances,
-                    stationary=stationary,
-                    presences=presences,
-                    reference_lane_index=m,
-                    reference_lane_coordinates=n,
-                    local_lane)"""
-                item = cache[afl_index]
-                plt.plot(*zip(*item['history']))
-                plt.plot(*zip(*item['future']))
-                plt.show()
-
+            continue
+        if show:
             continue
         try:
+            cache[afl_index] = process_item(afl[afl_index])
+            cache.commit()
             for item in [afl[afl_index]]:
-                track_id, = list(set(item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]['TRACK_ID']))
-                others = sorted(list(set(item.seq_df[item.seq_df["OBJECT_TYPE"] != "AGENT"]['TRACK_ID'])))
-                neighbors_df = item.seq_df[item.seq_df["OBJECT_TYPE"] != "AGENT"]
-                all_track_ids = [track_id] + others
-
-                # First step, read the file
-                data = read_csv_into_dict(item.current_seq)
-                full_coordinates = get_full_coordinates(data, all_track_ids)
-                presences, distances = get_presence_and_distance(full_coordinates)
-
-                def is_stationary(list_of_velocities):
-                    sorted_vel = sorted(list_of_velocities)
-                    threshold_vel = sorted_vel[STATIONARY_THRESHOLD]
-                    return threshold_vel < VELOCITY_THRESHOLD
-
-                full_coordinates = pad_coordinates(full_coordinates)
-                stationary = list(map(is_stationary, np.transpose(get_velocities(full_coordinates, sorted(data)))))
-                neighbors_indices, neighbors = filter_nearest_neighbors(
-                    full_coordinates, distances, stationary,
-                    tau=HISTORY_SIZE + PREDICTION_SIZE)
-
-                _ = neighbors_indices.pop(0)
-                try:
-                    assert not _, (_, neighbors_indices)
-                except AssertionError:
-                    raise NotEnoughPoints('Unknown error')
-                target_history = [i.pop(0) for i in neighbors][:HISTORY_SIZE]
-                target_future = [i[0] for i in full_coordinates][20:]
-                assert len(target_future) == PREDICTION_SIZE, len(target_future)
-
-                rot = get_rot(*target_history[-2:])
-
-                # df = pd.read_csv(item.current_seq, dtype={"TIMESTAMP": str})
-                # agent_track = df[df["OBJECT_TYPE"] == "AGENT"].values
-                # Social features are computed using only the observed trajectory
-                # social_features = compute_social_features(
-                #     df, agent_track, HISTORY_SIZE, HISTORY_SIZE + PREDICTION_SIZE, RAW_DATA_FORMAT)
-                # Track groups
-
-                # show_trajectory(target_history, target_future, )  # list(zip(x, y)), )
-                local_history = convert_global_coords_to_local(target_history, target_history[-1], rot)
-                local_future = convert_global_coords_to_local(target_future, target_history[-1], rot)
-                global_n_plus = np.full((N, HISTORY_SIZE + PREDICTION_SIZE, 2), np.nan)
-                global_n = np.zeros((N, HISTORY_SIZE, 2))  # [[] for i in range(len(neighbors[0]))]  # 6 x 20
-                for ts_index, time_step in list(enumerate(neighbors)):  # x 20
-                    if ts_index < HISTORY_SIZE:
-                        for index, neighbor in enumerate(time_step):  # x 6
-                            global_n[index, ts_index, 0] = neighbor[0]
-                            global_n[index, ts_index, 1] = neighbor[1]
-                    for index, neighbor in enumerate(time_step):  # x 6
-                        global_n_plus[index, ts_index, 0] = neighbor[0]
-                        global_n_plus[index, ts_index, 1] = neighbor[1]
-
-                def f(x, full):
-                    exception = NotEnoughPoints()
-                    possibilities = []
-                    for y in fu.get_candidate_centerlines_for_trajectory(
-                            full, item.city, am,
-                            viz=False, seq_len=90,
-                            max_search_radius=5):
-                        try:
-                            possibilities.append(cut_lanes(y, x))
-                        except NotEnoughPoints as g:
-                            exception = g
-                    if not possibilities:
-                        raise exception
-                    return possibilities
-
-                def convert(thing):
-                    return convert_global_coords_to_local(thing, target_history[-1], rot)
-
-                global_lanes = np.array([f(*i) for i in zip(global_n, global_n_plus)])
-                local_neighbors = np.array([list(map(convert, i)) for i in global_n])
-                local_lanes = np.array([list(map(convert, i)) for i in global_lanes])
-                agent_x = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["X"][:HISTORY_SIZE + 1]
-                agent_y = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["Y"][:HISTORY_SIZE + 1]
-                agent_history, agent_history_bis = np.column_stack((agent_x, agent_y)), [agent_x, agent_y]
-                agent_x = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["X"]
-                agent_y = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["Y"]
-                global_lane = f(np.array(list(zip(agent_x, agent_y))), agent_history)
-                local_lane = list(map(convert, global_lane))
-
-                nu = (lambda j: j + 1)
-                d = (lambda l: sum(min(np.linalg.norm(c - m) for m in l) * nu(i) for i, c in enumerate(local_future)))
-                m, n = sorted(enumerate(local_lanes), key=(lambda k: d(k[1])))[0]
-
-                # show_trajectory(local_history, local_future, *local_neighbors[0], *local_lanes[0])
-                # show_trajectory(local_history, local_future, local_lane)
-
-                cache[afl_index] = dict(
-                    history=local_history,
-                    future=local_future,
-                    neighbors=local_neighbors,
-                    lanes=local_lanes,
-                    neighbors_indices=neighbors_indices,
-                    distances=distances,
-                    stationary=stationary,
-                    presences=presences,
-                    reference_lane_index=m,
-                    reference_lane_coordinates=n,
-                    local_lane=local_lane)
-                cache.commit()
-
-                """
-                def f(x):
-                    return cut_lanes(x[0], None)
-        
-                global_lanes = np.array([f(am.get_candidate_centerlines_for_traj(i, item.city, False)) for i in global_n])
-                global_lane = f(am.get_candidate_centerlines_for_traj(np.array(list(zip(agent_x, agent_y))), item.city, False))
-                print(np.array(global_lanes).shape, np.array(global_n).shape)
-                local_neighbors = np.array([convert_global_coords_to_local(i, target_history[-1], rot) for i in global_n])
-                local_lanes = np.array([convert_global_coords_to_local(i, target_history[-1], rot) for i in global_lanes])
-                local_lane = convert_global_coords_to_local(global_lane, target_history[-1], rot)"""
-
-                # show_trajectory(local_history, local_future, *local_neighbors, *local_lanes)
-                # show_trajectory(local_history, local_future, local_lane)
-                # print(local_lane.shape)
-                # print(local_lanes.shape)
-                # raise ValueError()
-
-                # print(neighbors_indices, )
-
                 continue
 
-                """sequence_iterator = iter(item.seq_df)
-                headers = next(sequence_iterator)
-                for row in sequence_iterator:
-                    print(dict(zip(headers, row)))"""
-
-                print(item.current_seq)
-
-                for timestamp in set(item.seq_df['TIMESTAMP']):
-                    timestamp_coordinate = []
-                    for other in others:
-                        print((item.seq_df['TIMESTAMP'] == timestamp))
-                        raise RuntimeError(
-                            item.seq_df[(item.seq_df['TIMESTAMP'] == timestamp)]['TRACK_ID'] == other
-                        )
-                raise RuntimeError
-
-                others_histories = []
-                for other in others:
-                    others_histories.append((
-                        item.seq_df[item.seq_df["TRACK_ID"] == other]["X"][:HISTORY_SIZE + 1],
-                        item.seq_df[item.seq_df["TRACK_ID"] == other]["Y"][:HISTORY_SIZE + 1]))
-                    print(others_histories[-1][0].shape, others_histories[-1][0].shape)
-                others_histories = np.array(others_histories)  # 44 x 2
-
-                agent_x = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["X"]
-                agent_y = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["Y"]
-                agent_full = np.column_stack((agent_x, agent_y))
-
-                current_coordinates = np.array([list(agent_x)[HISTORY_SIZE], list(agent_y)[HISTORY_SIZE]])
-
-                agent_x = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["X"][HISTORY_SIZE + 1:][:PREDICTION_SIZE]
-                agent_y = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["Y"][HISTORY_SIZE + 1:][:PREDICTION_SIZE]
-                agent_future, agent_future_bis = np.column_stack((agent_x, agent_y)), [agent_x, agent_y]
-
-                for all_x, all_y in others_histories:
-                    for (x, y) in zip(all_x, all_y):
-                        print(x, y)
-                        exit()
-                    am.get_lane_segments_containing_xy()
-
-                args = []
-                for lane in am.get_candidate_centerlines_for_traj(agent_full, item.city, False):
-                    args.extend(np.array(list(zip(*lane))))
-                plt.plot(*agent_future_bis, *agent_history_bis, *args)
-                plt.show()
-
-                # agent_traj = np.column_stack((agent_x, agent_y))
-
-                # print(track_id)
-
-            # am.get_nearest_centerline(item.agent_traj[0], item.city, False)
-
-            print('Total number of sequences:', len(afl))
         except NotEnoughPoints as e:
             print('Error in', afl_index, *e.args)
         except Exception as e:
@@ -898,30 +897,18 @@ def main():
         else:
             print('Success', afl_index)
 
-        if afl_index in cache:
-            """dict(
-                history=local_history,
-                future=local_future,
-                neighbors=local_neighbors,
-                lanes=local_lanes,
-                neighbors_indices=neighbors_indices,
-                distances=distances,
-                stationary=stationary,
-                presences=presences,
-                reference_lane_index=m,
-                reference_lane_coordinates=n,
-                local_lane)"""
-            item = cache[afl_index]
-            plt.plot(*zip(*item['history']))
-            plt.plot(*zip(*item['future']))
-            for lane in item['lanes']:
-                plt.plot(*zip(*lane))
-            for neighbor in item['neighbors']:
-                plt.plot(*zip(*neighbor))
-            plt.show()
+
+def show_item(item):
+    plt.plot(*zip(*item['history']))
+    plt.plot(*zip(*item['future']))
+    for lane in item['lanes']:
+        plt.plot(*zip(*lane))
+    for neighbor in item['neighbors']:
+        plt.plot(*zip(*neighbor))
+    plt.show()
 
 
 if __name__ == '__main__':
-    # main()
+    main()
     for i in get_items():
         print(i)
