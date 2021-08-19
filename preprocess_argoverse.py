@@ -659,6 +659,7 @@ def get_items():
                     print('0.0.0', lanes[0][0][0].shape)
                 with suppress(BaseException):
                     print('0.0.0.0', lanes[0][0][0][0].shape)
+                print([len(i) for i in lanes])
                 raise ValueError(lanes.shape)
             yield history, future, neighbors, lanes, np.array([reference_lane]), translation, transform
 
