@@ -1,7 +1,7 @@
 from itertools import chain
 from random import shuffle
 from traceback import print_exception, print_exc
-from typing import List, Iterator, Generator
+from typing import List, Iterator, Generator, Optional
 
 import numpy as np
 import yaml
@@ -38,7 +38,7 @@ PRECISION_LANE = ns_config['precision_lane']
 assert M.is_integer()
 M = int(M)
 
-nusc = None
+nusc: Optional[NuScenes] = None
 
 
 def get_nusc():
