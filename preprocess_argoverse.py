@@ -817,6 +817,7 @@ def process_item(item):
     global_lanes = np.array([f(*i) for i in zip(global_n, global_n_plus)])
     local_neighbors = np.array([list(map(convert, i)) for i in global_n])
     local_lanes = np.array([list(map(convert, i)) for i in global_lanes])
+    raise BaseException(local_lanes)
     agent_x = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["X"][:HISTORY_SIZE + 1]
     agent_y = item.seq_df[item.seq_df["OBJECT_TYPE"] == "AGENT"]["Y"][:HISTORY_SIZE + 1]
     agent_history, agent_history_bis = np.column_stack((agent_x, agent_y)), [agent_x, agent_y]
