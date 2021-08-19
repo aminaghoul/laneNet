@@ -270,6 +270,8 @@ def collate_fn(batch):
             # for row in batch:
             #     print(index, row[index].shape)
             print([row[index].shape for row in batch])
+            if index == 2:
+                raise ValueError(batch[0][index][0])
             try:
                 print('Index', index)
                 if len(set(row[index].shape for row in batch)) != 1:
