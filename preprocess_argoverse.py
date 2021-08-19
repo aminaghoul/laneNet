@@ -15,9 +15,16 @@ from csv import reader as csv_reader
 import numpy as np
 import pandas as pd
 
-from argoverse_forecasting.utils.map_features_utils import MapFeaturesUtils
+show = True
 
-am = ArgoverseMap()
+if not show:
+    from argoverse_forecasting.utils.map_features_utils import MapFeaturesUtils
+
+    am = ArgoverseMap()
+else:
+    MapFeaturesUtils = None
+    am = None
+
 ##set root_dir to the correct path to your dataset folder
 # root_dir = 'argoverse_api/forecasting_sample/data/'
 root_dir = expanduser('~/argoverse-forecasting/venv/forecasting_train_v1.1/train/data/')
@@ -59,7 +66,7 @@ def get_full_coordinates(data, track_ids):
     :return: List of dimensions [nb_timestamps x nb_items x 2]
     """
     full_coordinates = []
-    for key, value in data.items():
+    for key, value in sorted(data.items()):
         these_coordinates = []
         for current_track_id in track_ids:
             if current_track_id in value:
@@ -618,13 +625,66 @@ from sqlitedict import SqliteDict
 cache = SqliteDict('/var/tmp/cache.db')
 
 
+def get_items():
+    for item in cache.values():
+        """dict(
+            history=local_history,
+            future=local_future,
+            neighbors=local_neighbors,
+            lanes=local_lanes,
+            neighbors_indices=neighbors_indices,
+            distances=distances,
+            stationary=stationary,
+            presences=presences,
+            reference_lane_index=m,
+            reference_lane_coordinates=n,
+            local_lane)"""
+        nu = (lambda j: j + 1)
+        d = (lambda l: sum(min(np.linalg.norm(c - m) for m in l) * nu(i) for i, c in enumerate(item['future'])))
+        m, n = min(enumerate(item['lanes']), key=(lambda k: d(k[1])))
+        print([(i, d(j)) for i, j in sorted(enumerate(item['lanes']), key=(lambda k: d(k[1])))])  # m, n
+        plt.plot(*zip(*item['history']))
+        plt.plot(*zip(*item['future']))
+        for lane in item['lanes']:
+            print(lane[0].shape)
+            plt.plot(*zip(*lane[0]))
+        for neighbor in item['neighbors']:
+            neighbor = [i[0] for i in neighbor]
+            plt.plot(*zip(*neighbor))
+        plt.plot(*zip(*item['lanes'][m][0]), '.-r')
+        # exit()
+        plt.show()
+
+
 def main():
     vels_neighbors = []
-    afl = ArgoverseForecastingLoader(root_dir)
-    fu = MapFeaturesUtils()
+    if ArgoverseForecastingLoader is not None:
+        afl = ArgoverseForecastingLoader(root_dir)
+        fu = MapFeaturesUtils()
+    else:
+        afl = range(205942)
+    #
     for afl_index in tqdm(range(len(afl))):
         # afl_index = randrange(len(afl))
         if afl_index in cache:
+            if afl_index in cache:
+                """dict(
+                    history=local_history,
+                    future=local_future,
+                    neighbors=local_neighbors,
+                    lanes=local_lanes,
+                    neighbors_indices=neighbors_indices,
+                    distances=distances,
+                    stationary=stationary,
+                    presences=presences,
+                    reference_lane_index=m,
+                    reference_lane_coordinates=n,
+                    local_lane)"""
+                item = cache[afl_index]
+                plt.plot(*zip(*item['history']))
+                plt.plot(*zip(*item['future']))
+                plt.show()
+
             continue
         try:
             for item in [afl[afl_index]]:
@@ -812,6 +872,30 @@ def main():
         else:
             print('Success', afl_index)
 
+        if afl_index in cache:
+            """dict(
+                history=local_history,
+                future=local_future,
+                neighbors=local_neighbors,
+                lanes=local_lanes,
+                neighbors_indices=neighbors_indices,
+                distances=distances,
+                stationary=stationary,
+                presences=presences,
+                reference_lane_index=m,
+                reference_lane_coordinates=n,
+                local_lane)"""
+            item = cache[afl_index]
+            plt.plot(*zip(*item['history']))
+            plt.plot(*zip(*item['future']))
+            for lane in item['lanes']:
+                plt.plot(*zip(*lane))
+            for neighbor in item['neighbors']:
+                plt.plot(*zip(*neighbor))
+            plt.show()
+
 
 if __name__ == '__main__':
-    main()
+    # main()
+    for i in get_items():
+        print(i)

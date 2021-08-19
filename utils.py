@@ -97,8 +97,7 @@ def get_loss(v_hat, reference_indices, alpha, beta, v, h, all_lanes, device, cel
     # If reference_lane is first
     target = torch.tensor(reference_indices.clone().detach().requires_grad_(True), dtype=torch.long)
 
-    loss_cls = cel(out_la, target)#.float()
-
+    loss_cls = cel(out_la, target)  # .float()
 
     # If reference_lane is last
     # target = torch.empty(B, 2, dtype=torch.long).random_(5)
@@ -265,10 +264,14 @@ def collate_fn(batch):
             shapes, tail = [row.shape for row in batch[0]], batch_size - len(batch)
             # Then generate as many filler rows as I should to get the correct batch size
             batch.extend([tuple(np.zeros(shape) for shape in shapes) for _ in range(tail)])
+        print('===================================')
         for index in range(len(batch[0])):
             # for row in batch:
             #     print(index, row[index].shape)
-            print([row[index] for row in batch][0])
+            print([row[index].shape for row in batch])
+            if len(set(row[index].shape for row in batch)) != 1:
+                mini, = [row[index] for row in batch if len(row[index].shape) < len(batch[0][index].shape)]
+                print(mini, mini.shape, [i.shape for i in mini])
             yield torch.tensor(np.array([row[index] for row in batch]))
 
     return list(iterate())

@@ -1,4 +1,5 @@
 from itertools import chain
+from random import shuffle
 from traceback import print_exception, print_exc
 from typing import List, Iterator, Generator
 
@@ -11,6 +12,7 @@ from nuscenes.nuscenes import NuScenes
 
 from matplotlib import pyplot as plt
 from sqlitedict import SqliteDict
+from torch.utils.data import Dataset
 from tqdm import tqdm
 
 from nuscenes.prediction import convert_global_coords_to_local
@@ -247,7 +249,7 @@ class Scene:
                     close_possibilities[close_lane][neighbor_index] = possible_lane
 
         station = [np.linalg.norm(neighbor[0] - neighbor[-1]) for neighbor in neighbors]
-        score = [i + j - k for i, j, k in zip(neighbors_distances_to_ego, neighbors_distances_to_lane, station)]
+        score = [i + j for i, j in zip(neighbors_distances_to_ego, neighbors_distances_to_lane)]
 
         associated_lanes = set()
         while close_possibilities:
@@ -319,7 +321,7 @@ class Scene:
 
     def _put_together(self, lane_id: str, callback: callable, remaining_length: float, *already):
         for lane in callback(lane_id):
-            remaining = remaining_length - get_length_of_lane(self._nusc_map, lane)
+            remaining = remaining_length - get_length_of_lane(self._nusc_map, lane) * 0.5
             if remaining < 0:
                 yield (*already, lane)
             else:
@@ -427,7 +429,8 @@ class Scene:
         raise ValueError()
 
 
-def get_dataset():
+# scene-0771
+def _get_dataset():
     def generate():
         # print(differences)
         """for scene in nusc.scene:
@@ -453,39 +456,55 @@ def get_dataset():
                         print_exc()
                 # for index, arg in enumerate(preprocess_scene(scene)):
                 #     preprocessed_data[index].append(arg)
-        items = list(all_columns.values())
-        for history, future, neighbors, lanes, reference_lane, translation, rotation in items:
+        items = list(all_columns.items())
+        # shuffle(items)
+        # items = [('scene-0771', dict(items).pop('scene-0771'))]
+        for scene_name, (history, future, neighbors, lanes, reference_lane, translation, rotation) in items:
+            # print(scene_name, )
+            # print(history)
+            # print(future)
+            # plt.plot(*zip(*future), '-', label='Future')
+            # plt.plot(*zip(*history), '-', label='History')
+            # for i, (lane, neighbor) in enumerate(zip(lanes, neighbors)):
+            #     plt.plot(*zip(*lane), '-g', label='Lane-%d' % i)
+            #     plt.plot(*zip(*neighbor), '-r', label='Neighbor-%d' % i)
+            # plt.legend()
+            # plt.show()
+
             if len(lanes) < n:
                 try:
-                    lanes = np.concatenate((lanes, np.zeros((n - len(lanes), M, 2))))
                     print(lanes.shape)
+                    lanes = np.concatenate((lanes, np.zeros((n - len(lanes), M, 2))))
                 except ValueError:
                     continue
                     raise
 
             if len(neighbors) < n:
+                print(neighbors.shape)
                 neighbors = np.concatenate((neighbors, np.zeros((n - len(neighbors), tau + 1, 2))))
                 print(neighbors.shape)
-            if len(history) < tau+1:
-                history = np.concatenate((history, np.zeros((tau+1 - len(history), 2))))
+
+            if len(history) < tau + 1:
+                print(history)
+                history = np.concatenate((history, np.zeros((tau + 1 - len(history), 2))))
                 print(history.shape)
 
             if len(future) < h:
+                print(future)
                 future = np.concatenate((future, np.zeros((h - len(future), 2))))
                 print(future.shape)
-            if len(future) < h:
-                future = np.concatenate((future, np.zeros((h - len(future), 2))))
-                print(future.shape)
 
-            #history = np.zeros((tau + 1, 2))
-            #future = np.zeros((h, 2))
-            #neighbors = np.zeros((n, tau + 1, 2))
-            #lanes = np.zeros((n, M, 2))
+            # history = np.zeros((tau + 1, 2))
+            # future = np.zeros((h, 2))
+            # neighbors = np.zeros((n, tau + 1, 2))
+            # lanes = np.zeros((n, M, 2))
 
-            #translation = np.zeros((3,))
-            #rotation = np.zeros((4,))
+            # translation = np.zeros((3,))
+            # rotation = np.zeros((4,))
 
-            yield history, future, neighbors, lanes, reference_lane, translation, rotation
+            print(tuple(map(type, (history, future, neighbors, lanes, reference_lane, translation, rotation))))
+
+            yield history, future, neighbors, lanes, reference_lane, np.array(translation), np.array(rotation)
             '''\
                 np.array(history, dtype=np.float64),
                 
@@ -500,6 +519,17 @@ def get_dataset():
     return list(generate())
 
 
+class get_dataset(Dataset):
+    def __init__(self):
+        self.items = _get_dataset()
+
+    def __len__(self):
+        return len(self.items)
+
+    def __getitem__(self, item):
+        return self.items[item]
+
+
 if __name__ == '__main__':
-    #get_nusc()
+    get_nusc()
     get_dataset()

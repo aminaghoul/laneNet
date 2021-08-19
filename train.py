@@ -131,7 +131,7 @@ def main_loop():
     # Initialize Models:
     print('Initializing models...', end='', flush=True)
     net = LaneNet('config.yml').float().to(device)
-    #print("net : ", net)
+    # print("net : ", net)
     print('done')
 
     print('Initializing losses...', end='', flush=True)
@@ -198,7 +198,6 @@ def main_loop():
             )
             """
 
-
             # history : B x (tau+1) x 2
             # lanes : B x N x M x 2
             # neighbors : B x N x (tau+1) x 2
@@ -224,7 +223,6 @@ def main_loop():
 
             # predict : K x B x (hx2)
 
-
             v_hat = predict.permute(1, 0, 2)
             # v_hat : B x K x (hx2)
 
@@ -245,11 +243,11 @@ def main_loop():
             loss.append(loss_total)
 
             print('Loss:', loss_total)
-            #loss_total = loss_total.float()
+            # loss_total = loss_total.float()
             loss_total.backward()
             # torch.nn.utils.clip_grad_value_(net.parameters(), 1.0)
             optimizer.step()
-            #scheduler.step()
+            # scheduler.step()
             all_lanes = lanes.permute(1, 0, 3, 2).type(torch.long)
 
             reference = []
@@ -265,41 +263,46 @@ def main_loop():
                 for t_history, t_neighbors, t_future, t_predict, t_lanes, ref in zip(
                         history, neighbors.permute(1, 0, 2, 3),
                         future, predict.permute(1, 0, 2), lanes.permute(1, 0, 2, 3), reference):
+                    arguments = []
+
                     # t_neighbors : N x nb_cordinates x (tau + 1)
 
                     target_x, target_y = [], []
                     for x, y, *z in t_history.permute(1, 0):
                         target_y.append(y)
                         target_x.append(x)
-                    args = [target_x, target_y, '-']
+                    arguments.append(((target_x, target_y, 'ego_history'), {'label': 'Target history'}))
+
                     target_x, target_y, *z = t_future.permute(1, 0)
-                    args.extend([target_x, target_y, '-'])
+                    arguments.append(((target_x, target_y, 'ego_future'), {'label': 'Target future'}))
 
                     l_x, l_y, *z = ref
-                    args.extend([l_x, l_y, '-'])
+                    arguments.append(((l_x, l_y, 'reference_lane'), {'label': 'Reference lane'}))
 
-                    for neighbor in t_neighbors:
+                    for n_index, neighbor in enumerate(t_neighbors):
                         neighbors_x, neighbors_y = [], []
                         for n_x, n_y, *z in neighbor:
                             neighbors_x.append(n_x)
                             neighbors_y.append(n_y)
-                        args.extend([neighbors_x, neighbors_y, '-'])
+                        arguments.append(((neighbors_x, neighbors_x, 'neighbor'), {'label': 'Neighbor %d' % n_index}))
 
-                    for t_k_predict in t_predict:
+                    for p_index, t_k_predict in enumerate(t_predict):
                         # predictions_x, predictions_y = [], []
                         # print(t_k_predict.reshape((2, h)).shape)
                         t_k__predict = t_k_predict.reshape((2, h))
                         predictions_x, predictions_y, *z = t_k__predict
-                        args.extend([predictions_x.detach().numpy(), predictions_y.detach().numpy(), '-'])
+                        arguments.append(
+                            ((predictions_x.detach().numpy(), predictions_y.detach().numpy(), 'prediction'),
+                             {'label': 'Prediction %d' % p_index}))
                         """for xx, yy in zip(x, y):
                             predictions_x.append(xx)
                             predictions_y.append(yy)
                         args.extend((predictions_x, predictions_y, '+'))"""
 
-                    for x, y in t_lanes:
-                        args.extend([x, y, '-g'])
+                    for p_index, (x, y) in enumerate(t_lanes):
+                        arguments.append(((x, y, 'lane'), {'label': 'Lane %d' % p_index}))
 
-                    open('/dev/shm/%d.pickle' % index, 'wb').write(pickle.dumps(args))
+                    open('/dev/shm/%d.pickle' % index, 'wb').write(pickle.dumps(arguments))
                     index += 1
 
             batch_error_dict = metrics(predict.detach().numpy(), v.detach().numpy())
@@ -308,7 +311,7 @@ def main_loop():
             print("ADE", np.min(batch_error_dict['ade']))  # sum(map(ade_t, range(B))) / B)
             print("FDE", np.min(batch_error_dict['fde']))  # sum(map(fde_t, range(B))) / B)
 
-        #scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
+        # scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, steps)
         torch.save({
             'epoch': epoch,
             'model_state_dict': net.state_dict(),
@@ -319,11 +322,6 @@ def main_loop():
             'fde': eval_fde_batch_errors
         }, 'current_state.bin')
 
-    plt.plot(eval_ade, label="ADE")
-    plt.plot(eval_fde, label="FDE")
-    plt.plot(loss, label="loss")
-    plt.legend()
-    plt.show()
 
 
 if __name__ == '__main__':
