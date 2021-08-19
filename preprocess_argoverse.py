@@ -647,9 +647,9 @@ def get_items():
             lanes = item['lanes']
             reference_lane = item['reference_lane_index']
             # TODO: Find them
-            translation = np.array([0.0, 0.0, 0.0])
-            rotation = np.array([0.0, 0.0, 0.0, 0.0])
-            yield history, future, neighbors, lanes, np.array([reference_lane]), translation, rotation
+            translation = np.array(history[-1])
+            transform = get_rot(*history[-2:])
+            yield history, future, neighbors, lanes, np.array([reference_lane]), translation, transform
 
             '''nu = (lambda j: j + 1)
             d = (lambda l: sum(min(np.linalg.norm(c - m) for m in l) * nu(i) for i, c in enumerate(item['future'])))

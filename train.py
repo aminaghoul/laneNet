@@ -194,7 +194,7 @@ def main_loop(use_nuscene=False):
         # Variables to track training performances
         # ...
 
-        for i, (history, future, neighbors, lanes, reference_lane, translation, rotation) in enumerate(tr_dl):
+        for i, (history, future, neighbors, lanes, reference_lane, translation, transform) in enumerate(tr_dl):
             print('Step ', i, '/', len(tr_dl))
             """ 
            reference_lane: np.array = torch.tensor(list(
