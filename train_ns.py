@@ -181,7 +181,7 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
                 # t_neighbors : N x nb_cordinates x (tau + 1)
 
                 target_x, target_y = [], []
-                for x, y, *z in t_history.permute(1, 0):
+                for (x, y, _) in t_history.permute(1, 0):
                     target_y.append(y)
                     target_x.append(x)
                 arguments.append(((target_x, target_y, 'ego_history'), {'label': 'Target history'}))
@@ -189,7 +189,7 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
                 target_x, target_y, *z = t_future.permute(1, 0)
                 arguments.append(((target_x, target_y, 'ego_future'), {'label': 'Target future'}))
 
-                l_x, l_y, *z = ref
+                l_x, l_y, _ = ref
                 arguments.append(((l_x, l_y, 'reference_lane'), {'label': 'Reference lane'}))
 
                 for n_index, neighbor in enumerate(t_neighbors):
