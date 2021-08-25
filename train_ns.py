@@ -47,7 +47,7 @@ K = config['ln_args']['number_of_predictions']
 print("\nEXPERIMENT:", args['model_dir'], "\n")
 alpha = config['ln_args']['alpha']
 beta = config['ln_args']['beta']
-
+h = config['ns_args']['prediction_duration']
 batch_size = config['ln_args']['batch_size']
 
 ## Initialize data loaders
@@ -55,7 +55,7 @@ logging.info("Loading the datasets...")
 
 trSet = NuscenesDataset(step='mini_train')
 
-valSet = NuscenesDataset(step='validation')
+valSet = NuscenesDataset(step='mini_val')
 
 trDataloader = DataLoader(trSet, batch_size=batch_size, shuffle=True, num_workers=8)
 #print('samples = ', trSet.nb_samples)
@@ -75,7 +75,7 @@ net.train()
 
 ## Initialize optimizer
 pretrainEpochs = 0
-trainEpochs = 50
+trainEpochs = 10
 
 optimizer = torch.optim.Adam(net.parameters(), lr=0.001)
 
@@ -102,13 +102,12 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
     avg_lat_acc = 0
     avg_lon_acc = 0
 
-    for i, (history, future, mask, neighbors, lanes, reference_lane) in enumerate(trDataloader):
+    for i, (history, future, mask, neighbors_ini, lanes, reference_lane, ref_) in enumerate(trDataloader):
 
         st_time = time.time()
-
         print('history : ', history.shape)
         print('future : ', future.shape)
-        print('neighbors : ', neighbors.shape)
+        print('neighbors : ', neighbors_ini.shape)
         print('lanes : ', lanes.shape)
         print('reference_lane : ', reference_lane.shape)
 
@@ -116,17 +115,17 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
         # lanes : B x N x M x 2
         # neighbors : B x N x (tau+1) x 2
         # v : future : B x h x 2
-        # reference_lane : B x 1
-        neighbors = torch.squeeze(neighbors, dim=3)
+        # reference_lane : B
+        #neighbors = torch.squeeze(neighbors, dim=3)
         # We start by preprocessing the inputs
         history = torch.permute(history.float().to(device), (0, 2, 1))
         lanes = torch.permute(lanes.float().to(device), (1, 0, 3, 2))
-        neighbors = torch.permute(neighbors.float().to(device), (1, 0, 3, 2))
+        neighbors = torch.permute(neighbors_ini.float().to(device), (1, 0, 3, 2))
         # history : B x 2 x tau
         # lanes :  N x B x 2 x M
         # neighbors :  N x B x 2 x tau
 
-        reference_lane = torch.squeeze(reference_lane.float().to(device), dim=1)
+        #reference_lane = torch.squeeze(reference_lane.float().to(device), dim=1)
 
         v = torch.flatten(future, start_dim=1)
         v = v.float().to(device)
@@ -163,25 +162,26 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
         optimizer.step()
         all_lanes = lanes.permute(1, 0, 3, 2).type(torch.long)
 
-        reference = []
+        """reference = []
         for index, reference_index in enumerate(reference_lane.type(torch.long)):
-            reference.append(all_lanes[index][reference_index])
-        reference = torch.stack(reference).permute(0, 2, 1)
+            reference.append(np.array(all_lanes[index][reference_index]))"""
+
+        reference = ref_ #torch.tensor(reference).permute(0, 2, 1)
 
         index = 0
         try:
             raise KeyboardInterrupt
         except KeyboardInterrupt:
-            print(history.shape, neighbors.shape, v.shape, predict.permute(1, 0, 2).shape)
+            print(history.shape, neighbors_ini.shape, v.shape, predict.permute(1, 0, 2).shape)
             for t_history, t_neighbors, t_future, t_predict, t_lanes, ref in zip(
-                    history, neighbors.permute(1, 0, 2, 3),
+                    history, neighbors_ini,
                     future, predict.permute(1, 0, 2), lanes.permute(1, 0, 2, 3), reference):
                 arguments = []
 
                 # t_neighbors : N x nb_cordinates x (tau + 1)
 
                 target_x, target_y = [], []
-                for (x, y, _) in t_history.permute(1, 0):
+                for (x, y, *z) in t_history.permute(1, 0):
                     target_y.append(y)
                     target_x.append(x)
                 arguments.append(((target_x, target_y, 'ego_history'), {'label': 'Target history'}))
@@ -189,7 +189,7 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
                 target_x, target_y, *z = t_future.permute(1, 0)
                 arguments.append(((target_x, target_y, 'ego_future'), {'label': 'Target future'}))
 
-                l_x, l_y, _ = ref
+                l_x, l_y, *z = ref
                 arguments.append(((l_x, l_y, 'reference_lane'), {'label': 'Reference lane'}))
 
                 for n_index, neighbor in enumerate(t_neighbors):
@@ -248,7 +248,7 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
     total_points = 0
 
     with torch.no_grad():
-        for i, (history, future, mask, neighbors, lanes, reference_lane) in enumerate(valDataloader):
+        for i, (history, future, mask, neighbors, lanes, reference_lane, ref_) in enumerate(valDataloader):
             st_time = time.time()
 
             print('history : ', history.shape)
@@ -261,8 +261,8 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
             # lanes : B x N x M x 2
             # neighbors : B x N x (tau+1) x 2
             # v : future : B x h x 2
-            # reference_lane : B x 1
-            neighbors = torch.squeeze(neighbors, dim=3)
+            # reference_lane : B
+
             # We start by preprocessing the inputs
             history = torch.permute(history.float().to(device), (0, 2, 1))
             lanes = torch.permute(lanes.float().to(device), (1, 0, 3, 2))
@@ -271,7 +271,7 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
             # lanes :  N x B x 2 x M
             # neighbors :  N x B x 2 x tau
 
-            reference_lane = torch.squeeze(reference_lane.float().to(device), dim=1)
+            #reference_lane = torch.squeeze(reference_lane.float().to(device), dim=1)
 
             v = torch.flatten(future, start_dim=1)
             v = v.float().to(device)

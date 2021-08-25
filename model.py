@@ -39,14 +39,14 @@ class LaneNet(nn.Module):
         self.drop = self._config['dropout']
         self.k = self._config['number_of_predictions']
         self.batch_size = self._config['batch_size']
-        self.tau = self._argo_config['history_duration'] # + 1 pour ns
-        self.M = int((self._argo_config['forward_lane'] + self._argo_config['backward_lane']) // (
-            self._argo_config['precision_lane']))
-        self.in_size = self._argo_config['nb_coordinates']
+        self.tau = self._ns_config['history_duration'] + 1 #pour ns
+        self.M = int((self._ns_config['forward_lane'] + self._ns_config['backward_lane']) // (
+            self._ns_config['precision_lane']))
+        self.in_size = self._ns_config['nb_coordinates']
         self.N = self._config['nb_lane_candidates']
-        self.h = self._argo_config['prediction_duration']
+        self.h = self._ns_config['prediction_duration']
         self.bidirectional = False
-        self.nb_coordinates = self._argo_config['nb_coordinates']
+        self.nb_coordinates = self._ns_config['nb_coordinates']
 
         # #######################################################################################
         # TODO: Restart and see what we can improve
