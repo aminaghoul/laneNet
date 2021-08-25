@@ -13,6 +13,7 @@ ns_args:
   num_epochs: 20
   log_dir: './results'
   steps_to_log_train_loss: 100
+  length_lane: 130
 
 argo_args:
   data_root: 'nuscenes'
@@ -42,3 +43,4 @@ ln_args:
   alpha: 0.3
   beta: 0.7
   weight_decay: 0.0
+  model_dir: 'experiments/'

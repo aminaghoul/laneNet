@@ -1,22 +1,13 @@
-import json
 import math
-from contextlib import contextmanager
-from datetime import timedelta
-from inspect import stack
-from itertools import chain
-from signal import signal, SIGALRM, alarm
-from time import time
-
 import numpy as np
-import torch
 import yaml
-from nuscenes.eval.prediction.config import PredictionConfig
-from torch.utils.data import DataLoader, Dataset
-from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
+import json
+import logging
+import os
+import shutil
 
-from main import NS
-from model import LaneNet
+import torch
 
 # Get arguments
 config_file = 'config.yml'
@@ -266,15 +257,64 @@ def collate_fn(batch):
             batch.extend([tuple(np.zeros(shape) for shape in shapes) for _ in range(tail)])
         print('===================================')
         for index in range(len(batch[0])):
+            print('Index', index)
             # for row in batch:
             #     print(index, row[index].shape)
-            print([row[index].shape for row in batch])
-            if len(set(row[index].shape for row in batch)) != 1:
-                mini, = [row[index] for row in batch if len(row[index].shape) < len(batch[0][index].shape)]
-                print(mini, mini.shape, [i.shape for i in mini])
+            """print([row[index].shape for row in batch])
+            # We forgot to remove the extra dimension
+            if index == 2 and len(batch[0][index].shape) == 4:
+                # [6, 20, 1, 2] -> [6, 20, 2]
+                for row_index, row in enumerate(batch):
+                    row[index] = np.array([[j[0] for j in i] for i in row[index]])"""
+            try:
+                print('Index', index)
+                if len(set(row[index].shape for row in batch)) != 1:
+                    mini, = [row[index] for row in batch if len(row[index].shape) < len(batch[0][index].shape)]
+                    print(mini, mini.shape, [i.shape for i in mini])
+                    raise RuntimeError()
+            except ValueError:
+                print('Index', index)
+                print(batch[0][index])
+                print('Index', index)
+                print(batch[0][index][0])
+                print('Index', index)
+                print(batch[0][index][0][0])
+                print('Index', index)
+                print(batch[0][index][0][0][0])
+                print('Index', index)
+                raise RuntimeError()
             yield torch.tensor(np.array([row[index] for row in batch]))
 
     return list(iterate())
+
+
+def set_logger(log_path):
+    """Set the logger to log info in terminal and file `log_path`.
+
+	In general, it is useful to have a logger so that every output to the terminal is saved
+	in a permanent file. Here we save it to `model_dir/train.log`.
+
+	Example:
+	```
+	logging.info("Starting training...")
+	```
+
+	Args:
+		log_path: (string) where to log
+	"""
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    if not logger.handlers:
+        # Logging to a file
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s:%(levelname)s: %(message)s'))
+        logger.addHandler(file_handler)
+
+        # Logging to console
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(logging.Formatter('%(message)s'))
+        logger.addHandler(stream_handler)
 
 
 # TODO: See where I used to reshape and better reshape

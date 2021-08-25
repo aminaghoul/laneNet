@@ -57,9 +57,6 @@ def distance_lane(reference_map, reference, lane):
     return np.sqrt(((x_r - x_l) ** 2) + ((y_r - y_l) ** 2))
 
 
-#
-
-
 class NS(Dataset):
     @classmethod
     def every_map(cls, config_path, split="mini_train"):

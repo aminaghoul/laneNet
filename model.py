@@ -29,6 +29,8 @@ class LaneNet(nn.Module):
             self._config = yaml.safe_load(yaml_file)['ln_args']
         with open(config_path, 'r') as yaml_file:
             self._ns_config = yaml.safe_load(yaml_file)['ns_args']
+        with open(config_path, 'r') as yaml_file:
+            self._argo_config = yaml.safe_load(yaml_file)['argo_args']
 
         self.use_cuda = self._config['use_cuda']
 
@@ -37,14 +39,14 @@ class LaneNet(nn.Module):
         self.drop = self._config['dropout']
         self.k = self._config['number_of_predictions']
         self.batch_size = self._config['batch_size']
-        self.tau = self._ns_config['history_duration'] + 1
-        self.M = int((self._ns_config['forward_lane'] + self._ns_config['backward_lane']) // (
-            self._ns_config['precision_lane']))
-        self.in_size = self._ns_config['nb_coordinates']
+        self.tau = self._argo_config['history_duration'] # + 1 pour ns
+        self.M = int((self._argo_config['forward_lane'] + self._argo_config['backward_lane']) // (
+            self._argo_config['precision_lane']))
+        self.in_size = self._argo_config['nb_coordinates']
         self.N = self._config['nb_lane_candidates']
-        self.h = self._ns_config['prediction_duration']
+        self.h = self._argo_config['prediction_duration']
         self.bidirectional = False
-        self.nb_coordinates = self._ns_config['nb_coordinates']
+        self.nb_coordinates = self._argo_config['nb_coordinates']
 
         # #######################################################################################
         # TODO: Restart and see what we can improve
@@ -117,8 +119,6 @@ class LaneNet(nn.Module):
         self._mtp_fc = torch.nn.ModuleList([torch.nn.Linear(in_features=1536, out_features=512), torch.nn.Linear(in_features=512, out_features=512),
                                              torch.nn.Linear(in_features=512, out_features=256)])
         self._mtp_fc_k = torch.nn.ModuleList([self._mtp_fc for k in range(self.k)])
-
-
 
         self._mtp_fc_shared = torch.nn.ModuleList([torch.nn.Linear(in_features=256, out_features=256),
                                                    torch.nn.Linear(in_features=256, out_features=self.h * self.nb_coordinates)])
