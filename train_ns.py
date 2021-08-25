@@ -141,7 +141,7 @@ for epoch_num in range(pretrainEpochs + trainEpochs):
         print("v_hat : ", v_hat.shape)
         # v_hat : B x K x (hx2)
 
-        # Then we calculate the losses
+        # Then we calculate the losses_
 
         # loss_total = l1_loss(predict[0], v)
         loss_total = get_loss(
